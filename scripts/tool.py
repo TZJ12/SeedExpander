@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json, time, copy, math, asyncio, requests, uuid
+import json, time, copy, math, asyncio, requests, uuid, random
 from pathlib import Path
 import datetime as dt
 from typing import Dict, List, Any, Tuple, Optional, Callable
@@ -671,9 +671,25 @@ async def _run_adaptive_core(
                     
                 # 2. Submit
                 log_callback(f"[{phase_label}] Batch {batch_idx}: Submitting to eval service...")
-                sub_stat, session_id = await _submit_eval_task(dataset_name, req.eval)
+                
+                # Retry loop for submission
+                submit_retry_count = 5
+                sub_stat = "error"
+                session_id = None
+                
+                for attempt in range(submit_retry_count):
+                    sub_stat, session_id = await _submit_eval_task(dataset_name, req.eval)
+                    
+                    if sub_stat == "ok" and session_id:
+                        break
+                    
+                    # If failed, wait with exponential backoff before retrying
+                    wait_time = 2 * (2 ** attempt) + random.uniform(0, 1) # 2s, 4s, 8s, 16s, 32s
+                    log_callback(f"[{phase_label}] Batch {batch_idx}: Submit attempt {attempt+1} failed. Retrying in {wait_time:.1f}s...")
+                    await asyncio.sleep(wait_time)
+                
                 if sub_stat != "ok" or not session_id:
-                    log_callback(f"[{phase_label}] Batch {batch_idx}: Submit failed.")
+                    log_callback(f"[{phase_label}] Batch {batch_idx}: Submit failed after {submit_retry_count} attempts.")
                     return batch_idx, [], [], 0, "error"
                     
                 # 3. Poll
