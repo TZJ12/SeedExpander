@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SeedExpander 控制台</title>
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --secondary-color: #6c757d;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --bg-color: #f8f9fa;
+            --panel-bg: #ffffff;
+            --border-color: #dee2e6;
+        }
+        
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: var(--bg-color); color: #333; }
+        
+        .container { display: flex; gap: 20px; max-width: 1400px; margin: 0 auto; height: calc(100vh - 40px); }
+        .left-panel { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); overflow-y: auto; }
+        .right-panel { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        
+        h1 { margin-top: 0; font-size: 24px; color: #333; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; }
+        h2 { font-size: 18px; margin-top: 20px; margin-bottom: 10px; color: #555; border-left: 4px solid var(--primary-color); padding-left: 10px; }
+        h3 { font-size: 16px; margin-top: 15px; margin-bottom: 5px; color: #666; }
+        
+        /* Form Elements */
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: 500; font-size: 14px; }
+        .form-control { width: 100%; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        .form-control:focus { border-color: var(--primary-color); outline: none; }
+        textarea.form-control { resize: vertical; min-height: 80px; }
+        
+        .row { display: flex; gap: 15px; }
+        .col { flex: 1; }
+        
+        /* Template Selection */
+        .template-group { margin-bottom: 15px; border: 1px solid var(--border-color); border-radius: 4px; padding: 10px; }
+        .template-group-title { font-weight: bold; margin-bottom: 8px; color: var(--primary-color); font-size: 14px; }
+        .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+        .checkbox-item { display: flex; align-items: center; font-size: 13px; cursor: pointer; }
+        .checkbox-item input { margin-right: 6px; }
+        
+        /* Category Selection */
+        .category-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .cat-tag { 
+            background: #e9ecef; border: 1px solid #ced4da; padding: 4px 10px; border-radius: 15px; 
+            font-size: 12px; cursor: pointer; transition: all 0.2s;
+        }
+        .cat-tag:hover { background: #dde2e6; border-color: #adb5bd; }
+        .cat-tag.active { background: var(--primary-color); color: white; border-color: var(--primary-color); }
+        
+        /* Action Buttons */
+        .btn-toolbar { display: flex; gap: 10px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color); }
+        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 15px; font-weight: 500; transition: background 0.2s; flex: 1; }
+        .btn-primary { background-color: var(--primary-color); color: white; }
+        .btn-primary:hover { background-color: #0069d9; }
+        .btn-secondary { background-color: var(--secondary-color); color: white; }
+        .btn-secondary:hover { background-color: #5a6268; }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        
+        /* Logs */
+        .log-window { 
+            flex: 1; background-color: #1e1e1e; color: #00ff00; 
+            font-family: 'Consolas', 'Monaco', monospace; padding: 15px; 
+            border-radius: 4px; overflow-y: auto; white-space: pre-wrap; font-size: 13px; 
+            position: relative;
+        }
+        .progress-container { margin-bottom: 10px; background-color: #e9ecef; border-radius: 4px; overflow: hidden; height: 20px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); }
+        .progress-bar { width: 0%; height: 100%; background-color: var(--primary-color); transition: width 0.3s ease; text-align: center; color: white; font-size: 12px; line-height: 20px; }
+        .status-bar { margin-bottom: 10px; padding: 10px; background: #fff; border-radius: 4px; border-left: 5px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 14px; }
+        
+        .analysis-box { margin-top: 15px; padding: 10px; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        .analysis-box h4 { margin: 5px 0; border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333; }
+        .analysis-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        .analysis-table th, .analysis-table td { border: 1px solid #eee; padding: 4px 8px; text-align: left; }
+        .analysis-table th { background-color: #f8f9fa; }
+
+        .status-running { border-left-color: var(--primary-color); }
+        .status-done { border-left-color: var(--success-color); }
+        .status-error { border-left-color: var(--danger-color); }
+        
+        /* Result Area */
+        .result-area { margin-top: 15px; padding: 15px; background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; border-radius: 4px; display: none; position: relative; }
+        .result-area.error { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; }
+        .result-toggle-btn {
+            position: absolute; top: 10px; right: 10px;
+            background: none; border: 1px solid currentColor; border-radius: 4px;
+            cursor: pointer; padding: 2px 8px; font-size: 12px; opacity: 0.7;
+        }
+        .result-toggle-btn:hover { opacity: 1; }
+        #resultContent { transition: max-height 0.3s ease-out; overflow: hidden; }
+        .collapsed #resultContent { max-height: 0; padding: 0; margin: 0; }
+
+        .helper-text { font-size: 12px; color: #888; margin-top: 2px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Panel: Configuration -->
+        <div class="left-panel">
+            <h1>🚀 SeedExpander 配置</h1>
+            
+            <!-- 1. Templates -->
+            <h2>1. 模板选择 (Templates)</h2>
+            <div id="templatesContainer">正在加载模板...</div>
+            <div style="margin-top:5px;">
+                <button type="button" class="btn btn-secondary" style="padding:4px 10px; font-size:12px; width:auto;" onclick="selectAllTemplates()">全选</button>
+                <button type="button" class="btn btn-secondary" style="padding:4px 10px; font-size:12px; width:auto;" onclick="deselectAllTemplates()">清空</button>
+            </div>
+
+            <!-- 2. Data Selection -->
+            <h2>2. 数据选择 (Data IDs)</h2>
+            <div class="category-tags" id="categoriesContainer">正在加载分类...</div>
+            <div class="form-group">
+                <label>Data IDs (英文逗号分隔):</label>
+                <textarea id="dataIdsInput" class="form-control" placeholder="在此输入 TC260 数据的 ID 列表，例如: 1, 2, 3。上方分类标签括号内为(总数)，方括号内为[ID范围]。"></textarea>
+                <div class="helper-text">输入 TC260 数据的 ID 列表</div>
+            </div>
+
+            <!-- 3. Configuration -->
+            <h2>3. 参数配置 (Configuration)</h2>
+            
+            <div class="row">
+                <div class="col">
+                    <div class="form-group">
+                        <label>数据集名称 (Name)[仅试题生成模式]</label>
+                        <input type="text" id="datasetName" class="form-control" value="Batch-Test">
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="form-group">
+                        <label>数据集描述 (Desc)[仅试题生成模式]</label>
+                        <input type="text" id="datasetDesc" class="form-control" value="Generated by SeedExpander">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>自适应评估模式 (Adaptive Mode)</label>
+                <div style="display: flex; gap: 15px; margin-bottom: 8px;">
+                    <label style="font-weight: normal; cursor: pointer;">
+                        <input type="radio" name="adaptiveMode" value="prob" checked onchange="toggleAdaptiveMode()"> 
+                        目标概率 (Target Probability)
+                    </label>
+                    <label style="font-weight: normal; cursor: pointer;">
+                        <input type="radio" name="adaptiveMode" value="size" onchange="toggleAdaptiveMode()"> 
+                        目标数据集大小 (Target Size MB)
+                    </label>
+                </div>
+                
+                <div id="probInputGroup">
+                    <input type="number" id="targetProb" class="form-control" value="0.3" step="0.05" min="0" max="1.0" placeholder="建议值0.3">
+                    <div class="helper-text">当成功率达到此值时停止</div>
+                </div>
+                
+                <div id="sizeInputGroup" style="display: none;">
+                    <input type="number" id="targetSize" class="form-control" value="1.0" step="0.1" min="0.1" placeholder="例如 1.0 MB">
+                    <div class="helper-text">当生成的数据集文件(JSON)达到此大小时停止</div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>自适应评估最大执行轮数 (Max Loops) </label>
+                <input type="number" id="maxLoops" class="form-control" value="3" min="1" max="10">
+            </div>
+
+            <!-- 4. Standalone Tools -->
+            <h2>4. 独立工具 (Standalone Tools)</h2>
+            <div class="form-group">
+                <label>目标文件名 (Target Filename)</label>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="evalFileName" class="form-control" placeholder="输入文件名 (e.g. batch_output.json)">
+                    <button type="button" class="btn btn-secondary" style="width: auto; white-space: nowrap;" onclick="triggerManualEval()">
+                        🚀 仅评估 (Run Eval)
+                    </button>
+                </div>
+                <div class="helper-text">文件需位于 eval 目录下</div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="btn-toolbar">
+                <button id="btnSaveBatch" class="btn btn-secondary" onclick="runBatchSave()">
+                    💾 仅生成试题 (Save Batch)
+                </button>
+                <button id="btnRunAdaptive" class="btn btn-primary" onclick="runAdaptive()">
+                    ▶️ 开始自适应评估 (Adaptive Eval)
+                </button>
+            </div>
+        </div>
+        
+        <!-- Right Panel: Logs & Results -->
+        <div class="right-panel">
+            <h2>执行日志 & 结果</h2>
+            <div id="statusBar" class="status-bar">状态: 就绪</div>
+            
+            <div class="progress-container">
+                <div id="progressBar" class="progress-bar">0%</div>
+            </div>
+
+            <div id="logWindow" class="log-window">等待指令...</div>
+            
+            <div id="resultArea" class="result-area">
+                <button class="result-toggle-btn" onclick="toggleResult()">⬆️ 收起</button>
+                <strong>评估结论:</strong>
+                <div id="resultContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchTemplates();
+            fetchCategories();
+        });
+
+        function toggleResult() {
+            const area = document.getElementById('resultArea');
+            const btn = area.querySelector('.result-toggle-btn');
+            area.classList.toggle('collapsed');
+            
+            if (area.classList.contains('collapsed')) {
+                btn.innerText = '⬇️ 展开';
+            } else {
+                btn.innerText = '⬆️ 收起';
+            }
+        }
+
+        // --- Fetch Data ---
+        async function fetchTemplates() {
+            try {
+                const res = await fetch('/templates');
+                const json = await res.json();
+                const grouped = json.data.grouped;
+                
+                const container = document.getElementById('templatesContainer');
+                container.innerHTML = '';
+                
+                for (const [group, ids] of Object.entries(grouped)) {
+                    if (ids.length === 0) continue;
+                    
+                    const groupDiv = document.createElement('div');
+                    groupDiv.className = 'template-group';
+                    
+                    const title = document.createElement('div');
+                    title.className = 'template-group-title';
+                    let titleText = group.toUpperCase() + ` (${ids.length})`;
+                    if (titleText.startsWith("STATIC")) {
+                        titleText += " <span style='font-size: 0.8em; font-weight: normal; color: #666;'>(本阶段建议仅选1个)</span>";
+                    }
+                    title.innerHTML = titleText;
+                    groupDiv.appendChild(title);
+                    
+                    const grid = document.createElement('div');
+                    grid.className = 'checkbox-grid';
+                    
+                    ids.forEach(id => {
+                        const label = document.createElement('label');
+                        label.className = 'checkbox-item';
+                        
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.name = 'template_id';
+                        checkbox.value = id;
+                        checkbox.dataset.group = group; // Store group name
+                        checkbox.checked = false; // Default unchecked as requested
+                        
+                        // Add click handler for single-select logic in STATIC group
+                        // [TEMP DISABLED] 注释掉单选逻辑以便测试
+                        // checkbox.onclick = function() {
+                        //     if (this.checked && this.dataset.group.toUpperCase().startsWith("STATIC")) {
+                        //         const others = document.querySelectorAll(`input[name="template_id"][data-group="${this.dataset.group}"]`);
+                        //         others.forEach(other => {
+                        //             if (other !== this) other.checked = false;
+                        //         });
+                        //     }
+                        // };
+                        
+                        label.appendChild(checkbox);
+                        label.appendChild(document.createTextNode(id));
+                        grid.appendChild(label);
+                    });
+                    
+                    groupDiv.appendChild(grid);
+                    container.appendChild(groupDiv);
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('templatesContainer').innerText = '加载模板失败';
+            }
+        }
+
+        async function fetchCategories() {
+            try {
+                const res = await fetch('/tc260/categories');
+                const json = await res.json();
+                const categories = json.data.categories;
+                
+                const container = document.getElementById('categoriesContainer');
+                container.innerHTML = '';
+                
+                categories.forEach(cat => {
+                    const tag = document.createElement('div');
+                    tag.className = 'cat-tag';
+                    tag.style.cursor = 'pointer'; // Make it look clickable
+                    tag.title = '点击添加此类别下的所有ID';
+                    tag.innerText = `${cat.category} (${cat.count}) [${cat.idx_range}]`;
+                    tag.onclick = () => addCategoryRange(cat.idx_range);
+                    container.appendChild(tag);
+                });
+            } catch (e) {
+                console.error(e);
+                document.getElementById('categoriesContainer').innerText = '加载分类失败';
+            }
+        }
+
+        // --- Helper Functions ---
+        function toggleAdaptiveMode() {
+            const mode = document.querySelector('input[name="adaptiveMode"]:checked').value;
+            const probGroup = document.getElementById('probInputGroup');
+            const sizeGroup = document.getElementById('sizeInputGroup');
+            
+            if (mode === 'prob') {
+                probGroup.style.display = 'block';
+                sizeGroup.style.display = 'none';
+            } else {
+                probGroup.style.display = 'none';
+                sizeGroup.style.display = 'block';
+            }
+        }
+
+        function addCategoryRange(rangeStr) {
+            if (!rangeStr) return;
+            // Parse range "1~10" -> "1,2,3...10"
+            const [start, end] = rangeStr.split('~').map(Number);
+            if (isNaN(start) || isNaN(end)) return;
+            
+            const newIds = [];
+            for (let i = start; i <= end; i++) newIds.push(i);
+            
+            const input = document.getElementById('dataIdsInput');
+            const currentVal = input.value.trim();
+            const currentIds = currentVal ? currentVal.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean) : [];
+            
+            // Merge and dedup
+            const combined = new Set([...currentIds, ...newIds]);
+            input.value = Array.from(combined).join(', ');
+        }
+        
+        function getSelectedTemplates() {
+            const checkboxes = document.querySelectorAll('input[name="template_id"]:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+        
+        function getDataIds() {
+            const input = document.getElementById('dataIdsInput').value;
+            if (!input.trim()) return [];
+            return input.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n));
+        }
+
+        function selectAllTemplates() {
+            document.querySelectorAll('input[name="template_id"]').forEach(cb => cb.checked = true);
+        }
+        function deselectAllTemplates() {
+            document.querySelectorAll('input[name="template_id"]').forEach(cb => cb.checked = false);
+        }
+
+        function getCommonPayload() {
+            const tpls = getSelectedTemplates();
+            const dids = getDataIds();
+            const name = document.getElementById('datasetName').value;
+            const desc = document.getElementById('datasetDesc').value;
+            
+            if (tpls.length === 0) throw new Error("请至少选择一个模板");
+            if (dids.length === 0) throw new Error("请至少填写一个 Data ID");
+            if (!name) throw new Error("请填写数据集名称");
+
+            return {
+                template_ids: tpls,
+                data_ids: dids,
+                dataset_meta: {
+                    name: name,
+                    description: desc,
+                    description_zh: desc
+                },
+                // Default extras
+                mode: "auto"
+            };
+        }
+        
+        function updateStatus(state, msg) {
+            const el = document.getElementById('statusBar');
+            el.className = `status-bar status-${state}`;
+            el.innerText = `状态: ${msg}`;
+        }
+        
+        function appendLog(msg) {
+            const win = document.getElementById('logWindow');
+            const time = new Date().toLocaleTimeString();
+            win.innerHTML += `[${time}] ${msg}\n`;
+            win.scrollTop = win.scrollHeight;
+        }
+
+        function showResult(html, isError=false) {
+            const area = document.getElementById('resultArea');
+            const content = document.getElementById('resultContent');
+            area.style.display = 'block';
+            area.className = isError ? 'result-area error' : 'result-area';
+            content.innerHTML = html;
+        }
+
+        // --- Actions ---
+
+        // 1. Execute Batch Async
+        async function runBatchSave() {
+            if (pollTimer) clearInterval(pollTimer);
+
+            try {
+                const payload = getCommonPayload();
+                
+                updateStatus('running', '正在提交批量生成任务...');
+                appendLog('提交批量生成任务...');
+                document.getElementById('resultArea').style.display = 'none';
+                resetProgress();
+                
+                // Use new async endpoint
+                const res = await fetch('/execute_batch_async', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await res.json();
+                
+                if (data.status !== "200") {
+                    throw new Error(data.message || "Unknown error");
+                }
+                
+                currentTaskId = data.data.task_id;
+                appendLog(`批量任务提交成功 ID: ${currentTaskId}`);
+                updateStatus('running', '批量生成执行中...');
+                
+                // Disable buttons
+                document.getElementById('btnSaveBatch').disabled = true;
+                
+                // Start Polling
+                pollTimer = setInterval(() => pollProgress(true), 1000); // Faster poll for batch
+                
+            } catch (e) {
+                console.error(e);
+                updateStatus('error', '出错');
+                appendLog(`Error: ${e.message}`);
+                showResult(`❌ 执行失败: ${e.message}`, true);
+                alert(e.message);
+            }
+        }
+
+        // 2. Adaptive Eval (Async)
+        let currentTaskId = null;
+        let pollTimer = null;
+
+        async function runAdaptive() {
+            if (pollTimer) clearInterval(pollTimer);
+            
+            try {
+                const basePayload = getCommonPayload();
+                
+                // Add Adaptive specific params
+                const loops = parseInt(document.getElementById('maxLoops').value);
+                const mode = document.querySelector('input[name="adaptiveMode"]:checked').value;
+                
+                let adaptiveConfig = {
+                    max_loops: loops
+                };
+                
+                if (mode === 'prob') {
+                    adaptiveConfig.target_probability = parseFloat(document.getElementById('targetProb').value);
+                    adaptiveConfig.target_size_mb = null;
+                } else {
+                    adaptiveConfig.target_probability = null; 
+                    adaptiveConfig.target_size_mb = parseFloat(document.getElementById('targetSize').value);
+                }
+                
+                const payload = {
+                    ...basePayload,
+                    adaptive: adaptiveConfig,
+                    eval: {
+                        content: {
+                            dataset: { name: basePayload.dataset_meta.name }
+                        }
+                    }
+                };
+                
+                updateStatus('running', '正在提交自适应任务...');
+                appendLog('提交自适应任务...');
+                document.getElementById('resultArea').style.display = 'none';
+                resetProgress();
+                
+                const res = await fetch('/execute_async', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await res.json();
+                 if (data.status !== "200") {
+                    throw new Error(data.message || "Unknown error");
+                }
+                
+                currentTaskId = data.data.task_id;
+                appendLog(`任务提交成功 ID: ${currentTaskId}`);
+                updateStatus('running', '任务执行中...');
+                
+                // Disable buttons
+                document.getElementById('btnRunAdaptive').disabled = true;
+                
+                // Start Polling
+                pollTimer = setInterval(() => pollProgress(false), 2000);
+                
+            } catch (e) {
+                console.error(e);
+                updateStatus('error', '提交失败');
+                appendLog(`Error: ${e.message}`);
+                alert(e.message);
+            }
+        }
+        
+        function resetProgress() {
+            const bar = document.getElementById('progressBar');
+            bar.style.width = '0%';
+            bar.innerText = '0%';
+        }
+
+        async function pollProgress(isBatch) {
+            if (!currentTaskId) return;
+            
+            try {
+                const res = await fetch(`/task_progress/${currentTaskId}`);
+                const json = await res.json();
+                
+                if (json.status !== "200") return;
+                
+                const task = json.data;
+                const logWin = document.getElementById('logWindow');
+                
+                if (logWin.innerText !== task.logs) {
+                    logWin.innerText = task.logs;
+                    logWin.scrollTop = logWin.scrollHeight;
+                }
+                
+                // Update Progress Bar
+                if (task.progress) {
+                    const pct = Math.round(task.progress.ratio * 100);
+                    const bar = document.getElementById('progressBar');
+                    bar.style.width = `${pct}%`;
+                    bar.innerText = `${pct}% (${task.progress.current}/${task.progress.total})`;
+                }
+
+                updateStatus(task.state === 'running' ? 'running' : (task.state === 'done' ? 'done' : 'error'), 
+                             `任务状态: ${task.state} (耗时 ${task.duration_s}s)`);
+                
+                if (task.state === 'done' || task.state === 'error') {
+                    clearInterval(pollTimer);
+                    document.getElementById('btnRunAdaptive').disabled = false;
+                    document.getElementById('btnSaveBatch').disabled = false;
+                    
+                    if (task.state === 'done') {
+                        const r = task.result;
+                        if (isBatch) {
+                            showResult(`
+                                ✅ 成功生成 <b>${r.count}</b> 条数据。<br>
+                                结果已保存至文件: ${r.saved_to ? r.saved_to.split(/[\\/]/).pop() : '未知'}<br>
+                                ${r.missing_data_ids && r.missing_data_ids.length ? 'Missing IDs: ' + r.missing_data_ids.join(', ') : ''}<br>
+                                <button class="btn btn-primary" style="padding: 2px 8px; font-size: 12px; margin-top: 5px;" onclick="runEvalOnly('${r.saved_to ? r.saved_to.split(/[\\/]/).pop() : ''}')">🚀 运行评估 (Run Eval)</button>
+                            `);
+                        } else {
+                            let analysisHtml = "";
+                            if (r.analysis) {
+                                const ana = r.analysis;
+                                
+                                function renderTable(title, data) {
+                                    if (!data || data.length === 0) return "";
+                                    let rows = data.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+                                    return `<h4>${title}</h4><table class="analysis-table"><thead><tr><th>Key</th><th>Count</th></tr></thead><tbody>${rows}</tbody></table>`;
+                                }
+
+                                // Nested Categories Renderer
+                                function renderNestedCategories(listData) {
+                                    if (!listData || listData.length === 0) return "";
+                                    
+                                    let html = `<h4>📂 场景分布 (按类别聚合)</h4><div style="border:1px solid #eee;">`;
+                                    
+                                    listData.forEach(cat => {
+                                        // Header
+                                        html += `
+                                            <div style="background:#f8f9fa; padding:5px 8px; border-bottom:1px solid #eee; font-weight:bold; font-size:12px;">
+                                                ${cat.name} <span style="float:right; color:#666;">${cat.count}</span>
+                                            </div>
+                                        `;
+                                        // Body (Subcategories)
+                                        if (cat.subcategories && cat.subcategories.length > 0) {
+                                            html += `<div style="padding:4px 0;">`;
+                                            cat.subcategories.forEach(([subName, subCount]) => {
+                                                html += `
+                                                    <div style="display:flex; justify-content:space-between; padding:2px 15px; font-size:12px; color:#555;">
+                                                        <span>└ ${subName}</span>
+                                                        <span>${subCount}</span>
+                                                    </div>
+                                                `;
+                                            });
+                                            html += `</div>`;
+                                        }
+                                    });
+                                    html += `</div>`;
+                                    return html;
+                                }
+
+                                analysisHtml = `
+                                    <div class="analysis-box">
+                                        <h4>📊 结果分析报告</h4>
+                                        <p>总成功率: <b>${(ana.total_success_rate * 100).toFixed(2)}%</b> (${ana.total_success_count})</p>
+                                        ${renderTable("🏆 攻击方式 Top", ana.by_template)}
+                                        ${renderNestedCategories(ana.nested_categories)}
+                                    </div>
+                                `;
+                            }
+
+                            showResult(`
+                                ✅ <b>自适应评估完成!</b><br>
+                                最终成功率: ${(r.final_probability * 100).toFixed(2)}%<br>
+                                Jailbreak Count: ${r.jailbreak_count}<br>
+                                结果已保存至: ${r.final_file || '未知路径'}<br>
+                                <button class="btn btn-primary" style="padding: 2px 8px; font-size: 12px; margin-top: 5px;" onclick="runDefenseTest('${r.final_file}')">🛡️ 运行防御测试</button>
+                                ${analysisHtml}
+                            `);
+                        }
+                    } else {
+                        showResult(`❌ 任务失败: ${task.error}`, true);
+                    }
+                }
+                
+            } catch (e) {
+                console.error("Poll error", e);
+            }
+        }
+
+        async function triggerManualEval() {
+            const fileName = document.getElementById('evalFileName').value.trim();
+            if (!fileName) {
+                alert("请先输入文件名");
+                return;
+            }
+            await runEvalOnly(fileName);
+        }
+
+        async function runEvalOnly(fileName) {
+            if (!fileName) {
+                alert("文件名无效");
+                return;
+            }
+            
+            // 构造默认评估配置（同自适应默认）
+            const datasetName = fileName.replace(".json", "");
+            const evalConfig = {
+                content: {
+                    dataset: { name: datasetName }
+                }
+            };
+
+            if (!confirm(`确定要对文件 ${fileName} 运行仅评估任务吗？\n(这将提交到评估服务并生成新结果文件)`)) return;
+
+            try {
+                updateStatus('running', '正在提交评估任务...');
+                appendLog(`开始对 ${fileName} 进行评估...`);
+                
+                const res = await fetch('/run_eval_only', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ 
+                        file_name: fileName,
+                        eval: evalConfig
+                    })
+                });
+                
+                const json = await res.json();
+                if (json.status !== "200") {
+                    throw new Error(json.message);
+                }
+                
+                const d = json.data;
+                const resultMsg = `
+评估任务完成!
+- 越狱数(Jailbreak): ${d.jailbreak_count}
+- 总数(Total): ${d.total}
+- 结果已保存至: ${d.result_file}
+                `.trim();
+                
+                alert(resultMsg);
+                appendLog(`[评估结果] ${resultMsg.replace(/\n/g, '; ')}`);
+                updateStatus('done', '评估完成');
+                
+                // 自动刷新显示结果（如果需要）
+                // 可以在这里加一个按钮让用户去跑防御测试
+                showResult(`
+                    ✅ <b>仅评估任务完成!</b><br>
+                    越狱数: ${d.jailbreak_count} / ${d.total}<br>
+                    结果文件: ${d.result_file}<br>
+                    <button class="btn btn-primary" style="padding: 2px 8px; font-size: 12px; margin-top: 5px;" onclick="runDefenseTest('${d.result_file}')">🛡️ 运行防御测试</button>
+                `);
+                
+            } catch (e) {
+                console.error(e);
+                alert("评估任务失败: " + e.message);
+                appendLog(`评估任务失败: ${e.message}`);
+                updateStatus('error', '评估失败');
+            }
+        }
+
+        async function runDefenseTest(fileName) {
+            if (!fileName) {
+                alert("文件名无效");
+                return;
+            }
+            if (!confirm(`确定要对文件 ${fileName} 运行防御测试吗？`)) return;
+
+            try {
+                updateStatus('running', '正在进行防御测试...');
+                appendLog(`开始对 ${fileName} 进行防御测试...`);
+                
+                const res = await fetch('/run_defense_test', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ file_name: fileName })
+                });
+                
+                const json = await res.json();
+                if (json.status !== "200") {
+                    throw new Error(json.message);
+                }
+                
+                const d = json.data;
+                const resultMsg = `
+防御测试完成!
+- 总数: ${d.total_records}
+- 识别成功(拦截): ${d.detected_count}
+- 识别失败(漏过): ${d.missed_count}
+- 识别率: ${(d.detection_rate * 100).toFixed(2)}%
+
+详细报告已保存至文件: ${d.report_filename}
+                `.trim();
+                
+                alert(resultMsg);
+                appendLog(`[防御测试结果] ${resultMsg.replace(/\n/g, '; ')}`);
+                updateStatus('done', '防御测试完成');
+                
+            } catch (e) {
+                console.error(e);
+                alert("防御测试失败: " + e.message);
+                appendLog(`防御测试失败: ${e.message}`);
+                updateStatus('error', '防御测试失败');
+            }
+        }
+    </script>
+</body>
+</html>
+
