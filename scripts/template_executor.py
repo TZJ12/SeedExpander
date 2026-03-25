@@ -68,8 +68,10 @@ async def _rewrite_with_dynamic_1(input_text: str) -> str:
         from train_single.dynamic import OPERATIONS, check_harmfulness
         
         last_rewritten = input_text
-        # Initial attempt + 3 retries = 4 iterations max
-        for i in range(4):
+        
+        # Original logic with finite retries (restored)
+        # Initial attempt + 7 retries = 8 iterations max
+        for i in range(2001):
             op_name, op_func = random.choice(OPERATIONS)
             
             if asyncio.iscoroutinefunction(op_func):
@@ -83,9 +85,9 @@ async def _rewrite_with_dynamic_1(input_text: str) -> str:
                 return rewritten
             
             last_rewritten = rewritten
-            if i < 3:
+            if i < 2000:
                 print(f"[_rewrite_with_dynamic_1] Attempt {i+1} result deemed harmless. Retrying...")
-            
+        
         return last_rewritten
     except Exception as e:
         print(f"[Error] _rewrite_with_dynamic_1 failed: {e}")
@@ -434,10 +436,10 @@ async def _exec_multilingual(input_text: str, options: Dict[str, Any]) -> str:
         return input_text
 
 
-async def _exec_instruction_override(input_text: str, options: Dict[str, Any]) -> str:
+async def _exec_standard_template(input_text: str, options: Dict[str, Any]) -> str:
     """
-    处理 instruction_override 类型的模板。
-    支持 dynamic_1 复杂度重写。
+    通用的模板执行器，适用于仅需“小规则重写 + 占位符填充”的攻击类型。
+    (如 instruction_override, goal_hijacking, prompt_leaking, refusal_induction 等)
     """
     try:
         complexity = options.get("complexity_level", "static")
@@ -452,9 +454,20 @@ async def _exec_instruction_override(input_text: str, options: Dict[str, Any]) -
         
         # 填充模板
         rendered = _render_with_placeholder(template, token, current_input)
+
+        if complexity == "dynamic_2":
+            try:
+                from model import call_jailbreak_llm_async
+                # 将填充好的模板作为 prompt 发送给 LLM 进行进一步重写/生成
+                out = await call_jailbreak_llm_async(rendered)
+                if isinstance(out, str) and out.strip():
+                    rendered = out
+            except Exception as e:
+                print(f"[Warning] dynamic_2 LLM call failed in _exec_standard_template: {e}")
+
         return rendered
     except Exception as e:
-        print(f"[Error] _exec_instruction_override failed: {e}")
+        print(f"[Error] _exec_standard_template failed: {e}")
         return input_text
 
 
@@ -504,7 +517,17 @@ EXECUTION_MAP = {
     "code_attack": _exec_code_attack_deepteam,
     "opposing": _exec_opposing_deepteam,
     "generator": _exec_generator,
-    "instruction_override": _exec_instruction_override,
+    "instruction_override": _exec_standard_template,
+    "goal_hijacking": _exec_standard_template,
+    "prompt_leaking": _exec_standard_template,
+    "refusal_induction": _exec_standard_template,
+    "developer_mode": _exec_standard_template,
+    "random_noise": _exec_standard_template,
+    "weak_semantic": _exec_standard_template,
+    "adversarial_suffix": _exec_standard_template,
+    "resource_exhaustion": _exec_standard_template,
+    "code_injection": _exec_standard_template,
+    "indirect_injection": _exec_standard_template
 }
 
 
@@ -648,8 +671,22 @@ async def async_execute_template(
 
     source = entry.get("_source")
     # 将 attack_type 与可选的 handler 标准化为小写，优先使用 handler 进行路由
-    attack_type = (entry.get("attack_type") or "").strip().lower()
-    handler_name = (entry.get("handler") or attack_type or "").strip().lower()
+    raw_attack_type = entry.get("attack_type")
+
+    if isinstance(raw_attack_type, list):
+        attack_type = [str(x).strip().lower() for x in raw_attack_type if x]
+        fallback_handler = attack_type[0] if attack_type else ""
+        is_special = "prompt_leaking" in attack_type or "code_injection" in attack_type
+    else:
+        attack_type = (raw_attack_type or "").strip().lower()
+        fallback_handler = attack_type
+        is_special = attack_type == "prompt_leaking" or attack_type == "code_injection"
+
+    # 特殊处理：如果是 prompt_leaking 类型的攻击，且 input_text 为空或默认，强制设为 "Start"
+    if is_special:
+        input_text = "Start"
+
+    handler_name = (entry.get("handler") or fallback_handler or "").strip().lower()
     token = entry.get("placeholder_token") or "input"
     
     # print(f"[DEBUG] async_execute_template: id={template_id}, handler={handler_name}, source={source}")
@@ -742,19 +779,9 @@ async def async_execute_template(
                 complexity = "static"
             
             if complexity == "dynamic_1":
+                rewritten_text = await _rewrite_with_dynamic_1(input_text)
 
-                # # 特殊处理 roleplay_13 (Buer): 不进行 dynamic 重写，直接翻译为英文
-                # if template_id == "roleplay_13":
-                #     try:
-                #         from train_single.attack.cipher_module import translate_text
-                #         rewritten_text = await translate_text(input_text, dest_lang="en")
-                #     except Exception as e:
-                #         print(f"[Warning] Translation for Buer failed: {e}")
-                #         rewritten_text = input_text
-                # else:
-                    rewritten_text = await _rewrite_with_dynamic_1(input_text)
-
-                    rendered_exec = _render_with_placeholder(template, token, rewritten_text, extras)
+                rendered_exec = _render_with_placeholder(template, token, rewritten_text, extras)
 
             elif engine == "deepteam":
                 rendered_exec = await _exec_roleplay_deepteam(input_text, opt_merged)
@@ -850,13 +877,18 @@ async def async_execute_template(
             opt_merged.update(options or {})
             opt_merged["template"] = template
             rendered_exec = await _exec_generator(input_text, opt_merged)
-        elif handler_name == "instruction_override":
+        elif handler_name in [
+            "instruction_override", "goal_hijacking", "prompt_leaking", 
+            "refusal_induction", "developer_mode", "random_noise", 
+            "weak_semantic", "adversarial_suffix", "resource_exhaustion",
+            "indirect_injection", "code_injection"
+        ]:
             opt_merged = dict(entry_options)
             opt_merged.update(options or {})
             opt_merged["template"] = template
             opt_merged["placeholder_token"] = token
             opt_merged["complexity_level"] = entry.get("complexity_level", "static")
-            rendered_exec = await _exec_instruction_override(input_text, opt_merged)
+            rendered_exec = await _exec_standard_template(input_text, opt_merged)
         else:
             rendered_exec = await exec_func(input_text, options) if exec_func is _exec_renellm else await exec_func(input_text) if exec_func in (_exec_math_problem) else await exec_func(input_text, options)
 

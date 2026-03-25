@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json, time, asyncio, requests
+import json, time, asyncio, requests, random
 import datetime as dt
 from typing import Dict, List, Any, Tuple
 from contextlib import asynccontextmanager
@@ -170,15 +170,43 @@ async def execute_batch(req: BatchExecRequest) -> Dict[str, Any]:
     # 预生成完整组合并去重，便于计算总进度
     seen: set[Tuple[str, int]] = set()
     pair_list: List[Dict[str, Any]] = []
+    
+    from scripts.template_executor import resolve_template
+    
     for i in range(m):
         tpl_id = req.template_ids[i]
-        for j in range(len(data_ids_int)):
-            did = data_ids_int[j]
-            key = (tpl_id, did)
-            if key in seen:
-                continue
-            seen.add(key)
-            pair_list.append({"template_id": tpl_id, "data_id": did})
+        
+        # 检查模板类型，如果是 prompt_leaking，则只生成一条任务
+        template_info = resolve_template(tpl_id)
+        is_leaking = False
+        if template_info:
+            raw_attack_type = template_info.get("attack_type")
+            if isinstance(raw_attack_type, list):
+                attack_type_list = [str(x).strip().lower() for x in raw_attack_type if x]
+                if "prompt_leaking" in attack_type_list:
+                    is_leaking = True
+            else:
+                attack_type = (raw_attack_type or "").strip().lower()
+                if attack_type == "prompt_leaking":
+                    is_leaking = True
+        
+        if is_leaking:
+            # 对于 prompt_leaking，只取第一个 data_id 生成一次
+            if data_ids_int:
+                did = data_ids_int[0]
+                key = (tpl_id, did)
+                if key not in seen:
+                    seen.add(key)
+                    pair_list.append({"template_id": tpl_id, "data_id": did})
+        else:
+            # 其他类型，全量组合
+            for j in range(len(data_ids_int)):
+                did = data_ids_int[j]
+                key = (tpl_id, did)
+                if key in seen:
+                    continue
+                seen.add(key)
+                pair_list.append({"template_id": tpl_id, "data_id": did})
 
     def log_progress(completed, total):
         pass # 或者打印
@@ -213,6 +241,7 @@ async def execute_batch(req: BatchExecRequest) -> Dict[str, Any]:
     }
 
 
+#数据生成+评估接口
 @app.post("/execute_batch_and_eval")
 async def execute_batch_and_eval(req: BatchAndEvalRequest) -> Dict[str, Any]:
     try:
@@ -236,7 +265,6 @@ async def execute_batch_and_eval(req: BatchAndEvalRequest) -> Dict[str, Any]:
 
 
 # --- Async Task Manager & UI ---
-
 @app.get("/ui", response_class=HTMLResponse)
 async def read_ui():
     index_path = PROJECT_ROOT / "static" / "index.html"
@@ -433,10 +461,23 @@ async def run_eval_only(req: EvalOnlyRequest) -> Dict[str, Any]:
                     print(f"[run_eval_only] Batch {batch_idx} save temp file failed: {e}")
                     return []
 
-                # 2. 提交评估
-                sub_stat, session_id = await _submit_eval_task(temp_dataset_name, req.eval)
+                # 2. 提交评估 (带重试)
+                sub_stat = "error"
+                session_id = None
+                for attempt in range(5):
+                    sub_stat, session_id, err_msg = await _submit_eval_task(temp_dataset_name, req.eval)
+                    if sub_stat == "ok" and session_id:
+                        break
+                    
+                    wait_time = 2 * (2 ** attempt) + random.uniform(0, 1)
+                    if err_msg and ("database is locked" in str(err_msg) or "SQLITE_BUSY" in str(err_msg)):
+                         wait_time += 3.0 # 增加等待时间
+                    
+                    print(f"[run_eval_only] Batch {batch_idx} submit attempt {attempt+1} failed. Retrying in {wait_time:.1f}s...")
+                    await asyncio.sleep(wait_time)
+                
                 if sub_stat != "ok" or not session_id:
-                    print(f"[run_eval_only] Batch {batch_idx} submit failed.")
+                    print(f"[run_eval_only] Batch {batch_idx} submit failed after 5 attempts.")
                     return []
                 
                 # 3. 轮询结果
@@ -563,7 +604,7 @@ async def run_eval_only(req: EvalOnlyRequest) -> Dict[str, Any]:
                 if cat is not None: target_rec["category"] = cat
                 target_rec["rendered"] = d_input or "" # 传给模型的输入内容
                 target_rec["eval_result"] = detail
- 
+                
                 if is_jb:
                     jailbreak_count_local += 1
                     

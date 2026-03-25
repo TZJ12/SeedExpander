@@ -103,10 +103,10 @@ class DefenseTestRequest(BaseModel):
 async def _submit_eval_task(
     dataset_name: str,
     eval_config: EvalContent,
-) -> Tuple[str, str | None]:
+) -> Tuple[str, str | None, str | None]:
     """
     提交评估任务。
-    返回: (status, session_id)
+    返回: (status, session_id, error_msg)
     """
     # 修复：使用 deepcopy 防止 dataFile 列表在不同阶段间累积污染
     payload = copy.deepcopy(eval_config.content)
@@ -138,8 +138,9 @@ async def _submit_eval_task(
             "content": payload
         }
     except Exception as e:
-        print(f"[_submit_eval_task] Payload construction error: {e}")
-        return "error", None
+        msg = f"[_submit_eval_task] Payload construction error: {e}"
+        print(msg)
+        return "error", None, msg
 
     try:
         base_url = Config.EVAL_URL
@@ -149,25 +150,31 @@ async def _submit_eval_task(
         # print(f"[_submit_eval_task] Submitting task for dataset {dataset_name}")
         r = requests.post(target_url, json=final_payload, headers=headers, timeout=60)
         if r.status_code != 200:
-            print(f"[_submit_eval_task] Submit failed: {r.status_code} {r.text}")
-            return "error", None
+            msg = f"[_submit_eval_task] Submit failed: {r.status_code} {r.text}"
+            print(msg)
+            return "error", None, msg
         
         resp_json = r.json()
         if resp_json.get("status") != 0:
-             print(f"[_submit_eval_task] Submit business error: {resp_json}")
-             return "error", None
+             msg = f"[_submit_eval_task] Submit business error: {resp_json}"
+             print(msg)
+             # 将 business error 的 message 部分也返回，方便上层做重试判断
+             err_detail = resp_json.get("message", "")
+             return "error", None, err_detail
              
         session_id = resp_json.get("data", {}).get("session_id")
         if not session_id:
-             print(f"[_submit_eval_task] No session_id returned: {resp_json}")
-             return "error", None
+             msg = f"[_submit_eval_task] No session_id returned: {resp_json}"
+             print(msg)
+             return "error", None, msg
              
         print(f"[_submit_eval_task] Task submitted, session_id={session_id}")
-        return "ok", session_id
+        return "ok", session_id, None
         
     except Exception as e:
-        print(f"[_submit_eval_task] Request exception: {e}")
-        return "error", None
+        msg = f"[_submit_eval_task] Request exception: {e}"
+        print(msg)
+        return "error", None, msg
 
 
 async def _poll_eval_result(
@@ -622,10 +629,32 @@ async def _run_adaptive_core(
             return False
             
         current_pairs = []
+        
+        from scripts.template_executor import resolve_template
+        
         for t in tpls:
-            for d in target_dids:
-                if (t, d) not in successful_pairs:
-                    current_pairs.append({"template_id": t, "data_id": d})
+            template_info = resolve_template(t)
+            is_leaking = False
+            if template_info:
+                raw_attack_type = template_info.get("attack_type")
+                if isinstance(raw_attack_type, list):
+                    attack_type_list = [str(x).strip().lower() for x in raw_attack_type if x]
+                    if "prompt_leaking" in attack_type_list:
+                        is_leaking = True
+                else:
+                    attack_type = (raw_attack_type or "").strip().lower()
+                    if attack_type == "prompt_leaking":
+                        is_leaking = True
+                    
+            if is_leaking:
+                if target_dids:
+                    d = target_dids[0]
+                    if (t, d) not in successful_pairs:
+                        current_pairs.append({"template_id": t, "data_id": d})
+            else:
+                for d in target_dids:
+                    if (t, d) not in successful_pairs:
+                        current_pairs.append({"template_id": t, "data_id": d})
                     
         if not current_pairs:
             log_callback(f"[{phase_label}] All pairs already successful. Skip.")
@@ -673,19 +702,30 @@ async def _run_adaptive_core(
                 log_callback(f"[{phase_label}] Batch {batch_idx}: Submitting to eval service...")
                 
                 # Retry loop for submission
-                submit_retry_count = 5
+                submit_retry_count = 10  # Increase max retries to 10
                 sub_stat = "error"
                 session_id = None
                 
                 for attempt in range(submit_retry_count):
-                    sub_stat, session_id = await _submit_eval_task(dataset_name, req.eval)
+                    sub_stat, session_id, err_msg = await _submit_eval_task(dataset_name, req.eval)
                     
                     if sub_stat == "ok" and session_id:
                         break
                     
-                    # If failed, wait with exponential backoff before retrying
-                    wait_time = 2 * (2 ** attempt) + random.uniform(0, 1) # 2s, 4s, 8s, 16s, 32s
-                    log_callback(f"[{phase_label}] Batch {batch_idx}: Submit attempt {attempt+1} failed. Retrying in {wait_time:.1f}s...")
+                    # Check for DB lock
+                    is_db_lock = False
+                    if err_msg and ("database is locked" in str(err_msg) or "SQLITE_BUSY" in str(err_msg)):
+                        is_db_lock = True
+
+                    if is_db_lock:
+                         # For DB lock, use a more generous wait time
+                         wait_time = 5.0 + (attempt * 3.0) + random.uniform(0, 3)
+                         log_callback(f"[{phase_label}] Batch {batch_idx}: Database locked (attempt {attempt+1}). Retrying in {wait_time:.1f}s...")
+                    else:
+                        # If failed, wait with exponential backoff before retrying
+                        wait_time = 2 * (2 ** attempt) + random.uniform(0, 1) # 2s, 4s, 8s, 16s, 32s
+                        log_callback(f"[{phase_label}] Batch {batch_idx}: Submit attempt {attempt+1} failed. Retrying in {wait_time:.1f}s...")
+                    
                     await asyncio.sleep(wait_time)
                 
                 if sub_stat != "ok" or not session_id:
@@ -1047,11 +1087,35 @@ async def _run_batch_task(task_id: str, req: BatchExecRequest):
         # 3. Generate Pairs
         pair_list: List[Dict[str, Any]] = []
         seen = set()
+        
+        from scripts.template_executor import resolve_template
+        
         for tpl_id in req.template_ids:
-            for did in data_ids_int:
-                if (tpl_id, did) not in seen:
-                    pair_list.append({"template_id": tpl_id, "data_id": did})
-                    seen.add((tpl_id, did))
+            template_info = resolve_template(tpl_id)
+            is_leaking = False
+            if template_info:
+                raw_attack_type = template_info.get("attack_type")
+                if isinstance(raw_attack_type, list):
+                    attack_type_list = [str(x).strip().lower() for x in raw_attack_type if x]
+                    if "prompt_leaking" in attack_type_list:
+                        is_leaking = True
+                else:
+                    attack_type = (raw_attack_type or "").strip().lower()
+                    if attack_type == "prompt_leaking":
+                        is_leaking = True
+            
+            if is_leaking:
+                if data_ids_int:
+                    did = data_ids_int[0]
+                    key = (tpl_id, did)
+                    if key not in seen:
+                        seen.add(key)
+                        pair_list.append({"template_id": tpl_id, "data_id": did})
+            else:
+                for did in data_ids_int:
+                    if (tpl_id, did) not in seen:
+                        pair_list.append({"template_id": tpl_id, "data_id": did})
+                        seen.add((tpl_id, did))
         
         task_manager.update_log(task_id, f"Total pairs to execute: {len(pair_list)}")
         
