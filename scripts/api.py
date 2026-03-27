@@ -28,6 +28,10 @@ from scripts.studio_api import (
     import_dataset_json as ls_import_dataset_json,
     import_dataset_file as ls_import_dataset_file,
     list_projects as ls_list_projects,
+    create_export as ls_create_export,
+    list_exports as ls_list_exports,
+    download_export as ls_download_export,
+    delete_export as ls_delete_export,
 )
 
 
@@ -852,6 +856,13 @@ class LSCreateAndImportBody(BaseModel):
     file_path: str | None = None
     file_name: str | None = None
 
+class LSCreateExportBody(BaseModel):
+    payload: Dict[str, Any] | None = None
+
+class LSDownloadExportQuery(BaseModel):
+    export_type: str | None = None
+    download_all_tasks: bool | None = None
+
 @app.get("/labelstudio/projects")
 def ls_list_projects_api() -> Dict[str, Any]:
     return ls_list_projects()
@@ -896,6 +907,42 @@ def ls_create_and_import_api(body: LSCreateAndImportBody) -> Dict[str, Any]:
     if body.items:
         return ls_import_dataset_json(pid, body.items)
     return {"status": "400", "message": "No dataset payload provided", "data": None}
+
+@app.get("/labelstudio/projects/{project_id}/exports")
+def ls_list_exports_api(project_id: int) -> Dict[str, Any]:
+    return ls_list_exports(project_id)
+
+@app.post("/labelstudio/projects/{project_id}/exports")
+def ls_create_export_api(project_id: int, body: LSCreateExportBody) -> Dict[str, Any]:
+    return ls_create_export(project_id, body.payload or {})
+
+@app.get("/labelstudio/projects/{project_id}/exports/{export_pk}/download")
+def ls_download_export_api(project_id: int, export_pk: int, exportType: str | None = None, download_all_tasks: bool | None = None) -> Dict[str, Any]:
+    res = ls_download_export(project_id, export_pk, exportType, download_all_tasks)
+    if res.get("status") != "200":
+        return res
+    data = res.get("data") or {}
+    content: bytes = data.get("content") or b""
+    headers: Dict[str, Any] = data.get("headers") or {}
+    ct = (headers.get("Content-Type") or "").lower()
+    ext = ".export"
+    if "application/json" in ct:
+        ext = ".json"
+    elif "text/csv" in ct:
+        ext = ".csv"
+    elif "application/zip" in ct or "application/x-zip-compressed" in ct:
+        ext = ".zip"
+    out_dir = ADAPTIVE_RESULT_DIR / "label-studio"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_name = f"project_{project_id}_export_{export_pk}{ext}"
+    out_path = out_dir / out_name
+    with out_path.open("wb") as f:
+        f.write(content)
+    return {"status": "200", "message": "downloaded", "data": {"file_path": str(out_path), "file_name": out_name}}
+
+@app.delete("/labelstudio/projects/{project_id}/exports/{export_pk}")
+def ls_delete_export_api(project_id: int, export_pk: int) -> Dict[str, Any]:
+    return ls_delete_export(project_id, export_pk)
 
 
 def main():

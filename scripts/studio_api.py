@@ -70,3 +70,65 @@ def list_projects() -> Dict[str, Any]:
     except Exception as e:
         return {"status": "500", "message": str(e), "data": None}
 
+def create_export(project_id: int, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    base_url = (Config.LABEL_STUDIO_URL or "").rstrip("/")
+    url = f"{base_url}/api/projects/{project_id}/exports/"
+    body = payload or {}
+    try:
+        r = requests.post(url, json=body, headers=_headers_json(), timeout=60)
+        if r.status_code in (200, 201):
+            return {"status": "200", "message": "export created", "data": r.json()}
+        return {"status": str(r.status_code), "message": r.text, "data": None}
+    except Exception as e:
+        return {"status": "500", "message": str(e), "data": None}
+
+def list_exports(project_id: int) -> Dict[str, Any]:
+    base_url = (Config.LABEL_STUDIO_URL or "").rstrip("/")
+    url = f"{base_url}/api/projects/{project_id}/exports/"
+    try:
+        r = requests.get(url, headers=_headers_auth(), timeout=60)
+        if r.status_code in (200, 201):
+            return {"status": "200", "message": "exports", "data": r.json()}
+        return {"status": str(r.status_code), "message": r.text, "data": None}
+    except Exception as e:
+        return {"status": "500", "message": str(e), "data": None}
+
+def download_export(project_id: int, export_pk: int, export_type: Optional[str] = None, download_all_tasks: Optional[bool] = None) -> Dict[str, Any]:
+    base_url = (Config.LABEL_STUDIO_URL or "").rstrip("/")
+    url = f"{base_url}/api/projects/{project_id}/exports/{export_pk}/download"
+    params: Dict[str, Any] = {}
+    if export_type:
+        params["exportType"] = export_type
+    if download_all_tasks is not None:
+        params["download_all_tasks"] = str(download_all_tasks).lower()
+    try:
+        r = requests.get(url, headers=_headers_auth(), params=params, timeout=120)
+        if r.status_code in (200, 201):
+            return {
+                "status": "200",
+                "message": "downloaded",
+                "data": {
+                    "content": r.content,
+                    "headers": dict(r.headers),
+                },
+            }
+        return {"status": str(r.status_code), "message": r.text, "data": None}
+    except Exception as e:
+        return {"status": "500", "message": str(e), "data": None}
+
+def delete_export(project_id: int, export_pk: int) -> Dict[str, Any]:
+    base_url = (Config.LABEL_STUDIO_URL or "").rstrip("/")
+    url = f"{base_url}/api/projects/{project_id}/exports/{export_pk}"
+    try:
+        r = requests.delete(url, json={}, headers=_headers_json(), timeout=60)
+        if r.status_code in (200, 201, 204):
+            data = None
+            try:
+                data = r.json()
+            except Exception:
+                data = None
+            return {"status": "200", "message": "deleted", "data": data}
+        return {"status": str(r.status_code), "message": r.text, "data": None}
+    except Exception as e:
+        return {"status": "500", "message": str(e), "data": None}
+

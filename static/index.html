@@ -204,6 +204,22 @@
                     </div>
                     <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="uploadToExistingProject()">⬆️ 上传到已选项目</button>
                 </div>
+                <div style="display: flex; gap: 10px; align-items: center; margin-top:10px;">
+                    <div style="flex: 1;">
+                        <label>导出任务列表</label>
+                        <select id="lsExportSelect" class="form-control"></select>
+                    </div>
+                    <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="fetchLSExports()">🔄 刷新导出</button>
+                    <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="createLSExport()">🆕 创建导出</button>
+                    <button type="button" class="btn btn-danger" style="width:auto; white-space:nowrap;" onclick="deleteLSExport()">🗑 删除导出</button>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center; margin-top:10px;">
+                    <input type="text" id="lsExportType" class="form-control" placeholder="exportType 可选, 如 JSON">
+                    <label style="display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" id="lsDownloadAll"> 下载全部
+                    </label>
+                    <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="downloadLSExport()">⬇️ 下载导出</button>
+                </div>
             </div>
 
             <!-- Action Buttons -->
@@ -929,6 +945,176 @@
             } catch (e) {
                 alert('上传失败: ' + e.message);
                 updateStatus('error', '失败');
+            }
+        }
+
+        async function fetchLSExports() {
+            const sel = document.getElementById('lsProjectSelect');
+            const pid = parseInt(sel.value);
+            if (!pid) {
+                alert('请先选择项目');
+                return;
+            }
+            try {
+                const res = await fetch(`/labelstudio/projects/${pid}/exports`);
+                let json = null;
+                try {
+                    json = await res.json();
+                } catch (e) {
+                    const txt = await res.text();
+                    alert('获取导出列表失败: ' + txt);
+                    return;
+                }
+                if (json.status !== "200") {
+                    alert(json.message || '获取导出列表失败');
+                    return;
+                }
+                const data = json.data;
+                const expSel = document.getElementById('lsExportSelect');
+                expSel.innerHTML = '';
+                let items = [];
+                if (Array.isArray(data)) {
+                    items = data;
+                } else if (data && Array.isArray(data.results)) {
+                    items = data.results;
+                } else if (data && typeof data === 'object') {
+                    items = typeof data.id !== 'undefined' ? [data] : [];
+                }
+                if (items.length === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = '无导出';
+                    expSel.appendChild(opt);
+                } else {
+                    items.forEach(e => {
+                        const opt = document.createElement('option');
+                        opt.value = e.id;
+                        opt.textContent = `${e.id} - ${e.status || e.state || ''}`;
+                        expSel.appendChild(opt);
+                    });
+                }
+                appendLog('刷新导出任务列表完成');
+            } catch (e) {
+                alert('获取导出列表失败: ' + e.message);
+            }
+        }
+
+        async function createLSExport() {
+            const sel = document.getElementById('lsProjectSelect');
+            const pid = parseInt(sel.value);
+            if (!pid) {
+                alert('请先选择项目');
+                return;
+            }
+            try {
+                const res = await fetch(`/labelstudio/projects/${pid}/exports`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ payload: {} })
+                });
+                let json = null;
+                try {
+                    json = await res.json();
+                } catch (e) {
+                    const txt = await res.text();
+                    alert('创建导出失败: ' + txt);
+                    return;
+                }
+                if (json.status !== "200") {
+                    alert(json.message || '创建导出失败');
+                    return;
+                }
+                const data = json.data;
+                let exportId = data && typeof data.id !== 'undefined' ? data.id : null;
+                if (exportId) {
+                    const expSel = document.getElementById('lsExportSelect');
+                    const opt = document.createElement('option');
+                    opt.value = exportId;
+                    opt.textContent = `${exportId} - ${data.status || data.state || ''}`;
+                    expSel.appendChild(opt);
+                    expSel.value = exportId;
+                }
+                alert('已创建导出任务');
+                appendLog('已创建导出任务');
+                if (!exportId) {
+                    fetchLSExports();
+                }
+            } catch (e) {
+                alert('创建导出失败: ' + e.message);
+            }
+        }
+
+        async function downloadLSExport() {
+            const pSel = document.getElementById('lsProjectSelect');
+            const pid = parseInt(pSel.value);
+            if (!pid) {
+                alert('请先选择项目');
+                return;
+            }
+            const eSel = document.getElementById('lsExportSelect');
+            const exportPk = parseInt(eSel.value);
+            if (!exportPk) {
+                alert('请先选择导出任务');
+                return;
+            }
+            const exportType = document.getElementById('lsExportType').value.trim() || '';
+            const downloadAll = document.getElementById('lsDownloadAll').checked;
+            try {
+                const params = new URLSearchParams();
+                if (exportType) params.set('exportType', exportType);
+                if (downloadAll) params.set('download_all_tasks', 'true');
+                const url = `/labelstudio/projects/${pid}/exports/${exportPk}/download` + (params.toString() ? `?${params.toString()}` : '');
+                const res = await fetch(url);
+                const json = await res.json();
+                if (json.status !== "200") {
+                    alert(json.message || '下载导出失败');
+                    return;
+                }
+                const name = json.data && json.data.file_name ? json.data.file_name : 'export.file';
+                alert(`已下载导出并保存为: ${name}`);
+                appendLog(`下载导出完成 -> ${name}`);
+            } catch (e) {
+                alert('下载导出失败: ' + e.message);
+            }
+        }
+
+        async function deleteLSExport() {
+            const pSel = document.getElementById('lsProjectSelect');
+            const pid = parseInt(pSel.value);
+            if (!pid) {
+                alert('请先选择项目');
+                return;
+            }
+            const eSel = document.getElementById('lsExportSelect');
+            const exportPk = parseInt(eSel.value);
+            if (!exportPk) {
+                alert('请先选择导出任务');
+                return;
+            }
+            if (!confirm(`确认删除导出 ${exportPk} ？`)) return;
+            try {
+                const res = await fetch(`/labelstudio/projects/${pid}/exports/${exportPk}`, {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({})
+                });
+                let json = null;
+                try {
+                    json = await res.json();
+                } catch (e) {
+                    const txt = await res.text();
+                    alert('删除导出失败: ' + txt);
+                    return;
+                }
+                if (json.status !== "200") {
+                    alert(json.message || '删除导出失败');
+                    return;
+                }
+                alert('已删除导出');
+                appendLog(`已删除导出 ${exportPk}`);
+                fetchLSExports();
+            } catch (e) {
+                alert('删除导出失败: ' + e.message);
             }
         }
     </script>
