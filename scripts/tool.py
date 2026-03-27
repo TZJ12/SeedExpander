@@ -97,6 +97,9 @@ class EvalOnlyRequest(BaseModel):
 class DefenseTestRequest(BaseModel):
     file_name: str
 
+class LabelStudioFormatRequest(BaseModel):
+    file_name: str
+
 
 # Functions
 
@@ -179,7 +182,7 @@ async def _submit_eval_task(
 
 async def _poll_eval_result(
     session_id: str,
-    timeout_total: int = 172800  # 将超时时间增加到 48 小时，以应对 Dynamic 阶段的大量任务
+    timeout_total: int = 86400  # 将超时时间增加到 24 小时，以应对 Dynamic 阶段的大量任务
 ) -> Tuple[str, int, int, List[Dict[str, Any]]]:
     """
     轮询任务状态直到结束。
@@ -608,6 +611,21 @@ async def _run_adaptive_core(
         
         with jb_path.open("w", encoding="utf-8") as f:
             json.dump(jb_data, f, ensure_ascii=False, indent=2)
+
+        test_filename = f"Jailbreak-Test-{timestamp_str}.json"
+        test_path = ADAPTIVE_RESULT_DIR / test_filename
+        test_records = []
+        for r in jailbreak_records_all:
+            test_records.append({
+                "prompt": r.get("rendered"),
+                "question": r.get("input_text"),
+                "category": r.get("category"),
+                "subcategory": r.get("subcategory"),
+                "template_id": r.get("template_id"),
+                "data_id": r.get("data_id"),
+            })
+        with test_path.open("w", encoding="utf-8") as f:
+            json.dump(test_records, f, ensure_ascii=False, indent=2)
 
         # Failed File
         fail_filename = f"Adaptive_Result_{timestamp_str}_Failed.json"

@@ -174,8 +174,36 @@
                     <button type="button" class="btn btn-secondary" style="width: auto; white-space: nowrap;" onclick="triggerManualEval()">
                         🚀 仅评估 (Run Eval)
                     </button>
+                    <button type="button" class="btn btn-secondary" style="width: auto; white-space: nowrap;" onclick="triggerFormatLS()">
+                        🧾 生成 Label Studio 格式
+                    </button>
                 </div>
                 <div class="helper-text">文件需位于 eval 目录下</div>
+            </div>
+
+            <h2>5. Label Studio 联动</h2>
+            <div class="form-group">
+                <div style="display: flex; gap: 10px; align-items: center; margin-bottom:8px;">
+                    <div style="flex: 1;">
+                        <label>最近格式化输出文件</label>
+                        <input type="text" id="lsLastFile" class="form-control" placeholder="尚未生成" readonly>
+                    </div>
+                    <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="fetchLSProjects()">🔄 刷新项目列表</button>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center; margin-bottom:8px;">
+                    <div style="flex: 1;">
+                        <label>新建项目标题</label>
+                        <input type="text" id="lsNewTitle" class="form-control" value="tc260检测">
+                    </div>
+                    <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="createAndUploadToLS()">🆕 新建并上传</button>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <div style="flex: 1;">
+                        <label>选择已有项目</label>
+                        <select id="lsProjectSelect" class="form-control"></select>
+                    </div>
+                    <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="uploadToExistingProject()">⬆️ 上传到已选项目</button>
+                </div>
             </div>
 
             <!-- Action Buttons -->
@@ -632,6 +660,13 @@
                                 Jailbreak Count: ${r.jailbreak_count}<br>
                                 结果已保存至: ${r.final_file || '未知路径'}<br>
                                 <button class="btn btn-primary" style="padding: 2px 8px; font-size: 12px; margin-top: 5px;" onclick="runDefenseTest('${r.final_file}')">🛡️ 运行防御测试</button>
+                                ${(() => { 
+                                    const testName = deriveTestFilenameFromAdaptive(r.final_file); 
+                                    return testName 
+                                        ? `<div style="margin-top:6px; font-size:12px; color:#555;">待格式化文件: <b>${testName}</b></div>
+                                           <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 12px; margin-top: 5px; margin-left: 0;" onclick="runFormatLabelStudio('${testName}')">🧾 生成 Label Studio 格式</button>` 
+                                        : ''; 
+                                  })()}
                                 ${analysisHtml}
                             `);
                         }
@@ -759,6 +794,141 @@
                 alert("防御测试失败: " + e.message);
                 appendLog(`防御测试失败: ${e.message}`);
                 updateStatus('error', '防御测试失败');
+            }
+        }
+        
+        function triggerFormatLS() {
+            const fileName = document.getElementById('evalFileName').value.trim();
+            if (!fileName) {
+                alert("请先输入文件名");
+                return;
+            }
+            runFormatLabelStudio(fileName);
+        }
+        
+        async function runFormatLabelStudio(fileName) {
+            try {
+                updateStatus('running', '正在生成 Label Studio 格式...');
+                appendLog(`开始格式化 ${fileName} ...`);
+                
+                const res = await fetch('/format_jailbreak_test', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ file_name: fileName })
+                });
+                const json = await res.json();
+                if (json.status !== "200") {
+                    throw new Error(json.message || "格式化失败");
+                }
+                const out = json.data.output_file || '';
+                const outName = out.split(/[\\/]/).pop();
+                alert(`格式化完成，输出文件: ${outName}`);
+                appendLog(`格式化完成 -> ${outName}`);
+                updateStatus('done', '格式化完成');
+                window.lastLSFileName = outName;
+                const inp = document.getElementById('lsLastFile');
+                if (inp) inp.value = outName;
+            } catch (e) {
+                console.error(e);
+                alert("格式化失败: " + e.message);
+                appendLog(`格式化失败: ${e.message}`);
+                updateStatus('error', '格式化失败');
+            }
+        }
+        
+        function deriveTestFilenameFromAdaptive(finalFile) {
+            if (!finalFile) return '';
+            const base = finalFile.split(/[\\/]/).pop();
+            const m = base.match(/^Adaptive_Result_(\d{8}_\d{6})_Jailbreak\.json$/);
+            if (m && m[1]) {
+                return `Jailbreak-Test-${m[1]}.json`;
+            }
+            return '';
+        }
+
+        async function fetchLSProjects() {
+            try {
+                const res = await fetch('/labelstudio/projects');
+                const json = await res.json();
+                if (json.status !== "200") {
+                    alert(json.message || '获取项目失败');
+                    return;
+                }
+                const data = json.data || {};
+                const results = data.results || [];
+                const sel = document.getElementById('lsProjectSelect');
+                sel.innerHTML = '';
+                results.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = `${p.id} - ${p.title}`;
+                    sel.appendChild(opt);
+                });
+                if (!results.length) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = '无项目';
+                    sel.appendChild(opt);
+                }
+                appendLog('刷新 Label Studio 项目列表完成');
+            } catch (e) {
+                alert('获取项目失败: ' + e.message);
+            }
+        }
+
+        async function createAndUploadToLS() {
+            const fileName = window.lastLSFileName;
+            if (!fileName) {
+                alert('请先生成 Label Studio 格式文件');
+                return;
+            }
+            const title = document.getElementById('lsNewTitle').value || 'tc260检测';
+            try {
+                updateStatus('running', '正在创建项目并上传...');
+                const res = await fetch('/labelstudio/create-and-import', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ title: title, file_name: fileName })
+                });
+                const json = await res.json();
+                if (json.status !== "200") throw new Error(json.message || '创建或上传失败');
+                alert('创建项目并上传成功');
+                appendLog('创建项目并上传成功');
+                updateStatus('done', '完成');
+                fetchLSProjects();
+            } catch (e) {
+                alert('创建或上传失败: ' + e.message);
+                updateStatus('error', '失败');
+            }
+        }
+
+        async function uploadToExistingProject() {
+            const fileName = window.lastLSFileName;
+            if (!fileName) {
+                alert('请先生成 Label Studio 格式文件');
+                return;
+            }
+            const sel = document.getElementById('lsProjectSelect');
+            const pid = parseInt(sel.value);
+            if (!pid) {
+                alert('请先选择一个项目');
+                return;
+            }
+            try {
+                updateStatus('running', '正在上传到已选项目...');
+                const res = await fetch(`/labelstudio/projects/${pid}/import-file`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ file_name: fileName })
+                });
+                const json = await res.json();
+                if (json.status !== "200") throw new Error(json.message || '上传失败');
+                alert('上传成功');
+                appendLog('上传成功');
+                updateStatus('done', '完成');
+            } catch (e) {
+                alert('上传失败: ' + e.message);
+                updateStatus('error', '失败');
             }
         }
     </script>

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from scripts.template_loader import load_all_templates
 
@@ -15,15 +16,24 @@ from scripts.template_loader import load_all_templates
 from scripts.tool import (
     PROJECT_ROOT, PROMPT_JSON_PATH, OUTPUTS_DIR, ADAPTIVE_RESULT_DIR,
     DatasetMeta, BatchExecRequest, BatchAndEvalRequest,
-    EvalOnlyRequest, DefenseTestRequest,
+    EvalOnlyRequest, DefenseTestRequest, LabelStudioFormatRequest,
     _load_tc260, _submit_eval_task, _poll_eval_result, _process_pairs_and_save,
     _validate_template_coverage, _run_adaptive_core, _analyze_results,
     task_manager, _run_adaptive_task, _run_batch_task
 )
 from config import Config
+from scripts.studio_api import (
+    create_project as ls_create_project,
+    import_dataset as ls_import_dataset,
+    import_dataset_json as ls_import_dataset_json,
+    import_dataset_file as ls_import_dataset_file,
+    list_projects as ls_list_projects,
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 应用生命周期管理：启动时调整事件循环的线程池容量，提升 I/O 密集型任务并发能力
     from concurrent.futures import ThreadPoolExecutor
     loop = asyncio.get_running_loop()
     # 增大默认线程池以提高 I/O 密集型任务并发度
@@ -40,6 +50,7 @@ app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "static")), name="
 
 @app.get("/templates")
 def list_template_ids() -> Dict[str, Any]:
+    # 模板列表接口：聚合并按复杂度分组返回所有模板 ID 及数量统计
     """列出 attack_methods 下两个文件的所有模板 ID（聚合）。"""
     all_items, _ = load_all_templates(PROMPT_JSON_PATH)
     
@@ -79,6 +90,7 @@ def list_template_ids() -> Dict[str, Any]:
 
 @app.get("/tc260/categories")
 def tc260_categories_overview() -> Dict[str, Any]:
+    # TC260 类目概览：从数据集中统计各类别的数量与索引范围
     """List per-category counts and idx ranges from tc260_initial.json."""
     items = _load_tc260()
     by_cat: Dict[str, Dict[str, Any]] = {}
@@ -125,6 +137,7 @@ def tc260_categories_overview() -> Dict[str, Any]:
 
 @app.post("/execute_batch")
 async def execute_batch(req: BatchExecRequest) -> Dict[str, Any]:
+    # 批量执行任务：对模板 ID 与问题 ID 做全组合（含特殊模板精简策略），生成并保存批量结果
     """批量执行：输入若干模板 ID 与若干问题 ID，
     每个模板配所有问题（矩阵全组合，去重），并写入 JSON。
     允许模板与问题数量不一致。
@@ -244,6 +257,7 @@ async def execute_batch(req: BatchExecRequest) -> Dict[str, Any]:
 #数据生成+评估接口
 @app.post("/execute_batch_and_eval")
 async def execute_batch_and_eval(req: BatchAndEvalRequest) -> Dict[str, Any]:
+    # 自适应执行与评估：先运行自适应生成流程，再调用评估服务并返回聚合数据
     try:
         _validate_template_coverage(req.template_ids)
     except HTTPException as e:
@@ -267,6 +281,7 @@ async def execute_batch_and_eval(req: BatchAndEvalRequest) -> Dict[str, Any]:
 # --- Async Task Manager & UI ---
 @app.get("/ui", response_class=HTMLResponse)
 async def read_ui():
+    # 前端页面接口：返回静态目录中的 index.html 用于任务管理展示
     index_path = PROJECT_ROOT / "static" / "index.html"
     if not index_path.exists():
         return "Static file not found. Please create static/index.html."
@@ -275,6 +290,7 @@ async def read_ui():
 
 @app.post("/execute_async")
 async def execute_async(req: BatchAndEvalRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    # 异步自适应任务提交：将自适应执行任务投递到后台并返回任务 ID
     """Submit an adaptive task to run in the background."""
     # Validate before spawning task
     try:
@@ -294,6 +310,7 @@ async def execute_async(req: BatchAndEvalRequest, background_tasks: BackgroundTa
 
 @app.get("/task_progress/{task_id}")
 async def get_task_progress(task_id: str) -> Dict[str, Any]:
+    # 异步任务进度查询：返回任务状态、日志、结果及持续时间
     task = task_manager.get_task(task_id)
     if not task:
         return {"status": "404", "message": "Task not found", "data": None}
@@ -317,6 +334,7 @@ async def get_task_progress(task_id: str) -> Dict[str, Any]:
 
 @app.post("/execute_batch_async")
 async def execute_batch_async(req: BatchExecRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    # 异步批量执行提交：将批量生成任务投递到后台并返回任务 ID
     """Submit a batch execution task to run in the background."""
     if not req.template_ids or not req.data_ids:
          return {"status": "422", "message": "template_ids and data_ids required", "data": None}
@@ -328,7 +346,6 @@ async def execute_batch_async(req: BatchExecRequest, background_tasks: Backgroun
         "message": "Batch task submitted",
         "data": {"task_id": task_id}
     }
-
 
 @app.post("/run_eval_only")
 async def run_eval_only(req: EvalOnlyRequest) -> Dict[str, Any]:
@@ -363,69 +380,48 @@ async def run_eval_only(req: EvalOnlyRequest) -> Dict[str, Any]:
         with file_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
         
-        # dataset_name = req.file_name
-        
-        # --- 原有逻辑注释 ---
-        # # 3. 提交评估
-        # sub_stat, session_id = await _submit_eval_task(dataset_name, req.eval)
-        # if sub_stat != "ok" or not session_id:
-        #     return {"status": "500", "message": "Submit eval failed", "data": None}
-            
-        # # 4. 轮询结果
-        # poll_stat, jb_cnt, tot_cnt, details = await _poll_eval_result(session_id)
-        # if poll_stat != "ok":
-        #     return {"status": "500", "message": f"Poll failed: {poll_stat}", "data": None}
-        # -------------------
-
-        # --- 新增逻辑：分批评估 (参考 tool.py _run_adaptive_core) ---
-        
-        # 获取 records
-        records_raw = data.get("data") or data.get("records") or []
-        if not records_raw and isinstance(data, list):
-             records_raw = data
-        
+        # 获取 records（顶层为 dict，使用 data 字段）
+        records_raw = data.get("data") or []
         if not records_raw:
-             return {"status": "200", "message": "No records to evaluate", "data": None}
+            return {"status": "200", "message": "No records to evaluate", "data": None}
 
-        # 预处理 records，确保包含 eval service 需要的字段 (prompt, custom_id, category)
-        # 同时保留原始信息以便后续合并
+        # 预处理 records，确保包含评估需要的字段（仅 prompt）
         processed_records = []
         for r in records_raw:
             if not isinstance(r, dict): continue
             
-            # 确定 prompt
-            # Adaptive 结果通常用 rendered, Batch 结果用 prompt
-            prompt_txt = r.get("rendered") or r.get("prompt") or r.get("input_text")
+            # 仅使用 prompt 字段作为评估输入
+            prompt_txt = r.get("prompt")
             if not prompt_txt: continue
             
-            # 确定 custom_id
-            cid = r.get("custom_id")
-            if not cid:
-                tid = r.get("template_id", "unknown")
-                did = r.get("data_id", "0")
-                cid = f"{tid}::{did}"
-            
-            # 确定 category
-            cat = r.get("category")
-            
             # 构造用于临时文件写入的 item
-            # 注意：Eval Service 通常读取 dataFile 中的 prompt, custom_id, category
             processed_records.append({
                 "original_record": r, # 持有引用
                 "eval_item": {
-                    "prompt": prompt_txt,
-                    "custom_id": cid,
-                    "category": cat
+                    "prompt": prompt_txt
                 }
             })
+
+        total_records = len(processed_records)
+        prompt_map = {}
+        for r in records_raw:
+            if isinstance(r, dict):
+                p = r.get("prompt")
+                if isinstance(p, str) and p.strip():
+                    prompt_map[p.strip()] = {
+                        "question": r.get("question"),
+                        "category": r.get("category"),
+                        "subcategory": r.get("subcategory"),
+                        "template_id": r.get("template_id"),
+                        "data_id": r.get("data_id"),
+                    }
 
         total_records = len(processed_records)
         print(f"[run_eval_only] Total records to evaluate: {total_records}")
 
         BATCH_SIZE = 1000
         BATCH_CONCURRENCY = 1
-        POLL_CONCURRENCY = 48
-        
+        POLL_CONCURRENCY = 48       
         batch_sem = asyncio.Semaphore(BATCH_CONCURRENCY)
         poll_sem = asyncio.Semaphore(POLL_CONCURRENCY)
         
@@ -437,17 +433,14 @@ async def run_eval_only(req: EvalOnlyRequest) -> Dict[str, Any]:
                 
                 # 1. 构造临时数据集文件
                 # 提取 eval_item
-                chunk_items = [x["eval_item"] for x in chunk]
-                
+                chunk_items = [x["eval_item"] for x in chunk]                
                 timestamp = int(time.time())
                 # 使用 sanitize 后的 filename 作为前缀
                 safe_name = req.file_name.replace(".json", "").replace(" ", "_")
                 temp_dataset_name = f"EvalOnly_{safe_name}_B{batch_idx}_{timestamp}"
                 temp_filename = f"{temp_dataset_name}.json"
-                # 必须保存在 OUTPUTS_DIR 或 ADAPTIVE_RESULT_DIR 供 Eval Service 读取
-                # tool.py 中通常在 OUTPUTS_DIR
+
                 temp_path = OUTPUTS_DIR / temp_filename
-                
                 temp_data = {
                     "name": temp_dataset_name,
                     "count": len(chunk_items),
@@ -512,154 +505,114 @@ async def run_eval_only(req: EvalOnlyRequest) -> Dict[str, Any]:
             all_details.extend(res)
             
         details = all_details # 兼容后续逻辑变量名
+        # 5. 保存结果：输出两份文件（Jailbreak 与 Safe）
+        result_filename_jb = f"{file_path.stem}_EvalResult_Jailbreak.json"
+        result_filename_safe = f"{file_path.stem}_EvalResult_Safe.json"
+        result_path_jb = ADAPTIVE_RESULT_DIR / result_filename_jb
+        result_path_safe = ADAPTIVE_RESULT_DIR / result_filename_safe
         
-        # --- End of Batching Logic ---
-            
-        # 5. 保存结果
-        # 我们创建一个新的结果文件，包含原数据和评估详情
-        result_filename = f"{file_path.stem}_EvalResult.json"
-        result_path = ADAPTIVE_RESULT_DIR / result_filename
-        
-        # 获取 records (兼容 data["data"] 或 data["records"] 或 直接 list)
-        # records = data.get("data") or data.get("records") or []
-        # if not records and isinstance(data, list):
-        #      records = data
-        records = records_raw # 使用原始 records
-             
-        # 构建 map 进行鲁棒匹配
-        map_by_cid = {}
-        map_by_rendered = {}
-        valid_records_list = []
-        
-        for r in records:
-            if not isinstance(r, dict): continue
-            valid_records_list.append(r)
-            
-            cid = r.get("custom_id")
-            if cid: map_by_cid[cid] = r
-            
-            # 优先使用 rendered 字段 (攻击增强后的内容)
-            # 兼容：如果文件中没有 rendered 字段但有 prompt 字段 (旧版本 batch 结果)，则尝试使用 prompt
-            # 注意：input_text 是原始问题，不能用于匹配评估返回的 input (因为那是增强后的)
-            p = r.get("rendered") or r.get("prompt")
-            if p: map_by_rendered[p.strip()] = r
 
+        jailbreak_records_full: List[Dict[str, Any]] = []
+        safe_records_full: List[Dict[str, Any]] = []
         matched_count = 0
         jailbreak_count_local = 0
-        jailbreak_records = []
         
         for detail in details:
-            target_rec = None
-            d_cid = detail.get("custom_id")
-            # 评估结果中的 input
-            d_input = detail.get("input") or detail.get("prompt")
-            
-            # 1. Custom ID 匹配
-            if d_cid:
-                target_rec = map_by_cid.get(d_cid)
-            
-            # 2. Rendered 内容精确匹配
-            if not target_rec and d_input:
-                target_rec = map_by_rendered.get(d_input.strip())
-            
-            # 3. 模糊匹配兜底 - 全量扫描
-            # 严禁使用索引/位置匹配
-            if not target_rec and d_input:
-                d_input_clean = d_input.strip()
-                if len(d_input_clean) > 5:
-                    for cand in valid_records_list:
-                         c_rendered = cand.get("rendered") or cand.get("prompt")
-                         if not c_rendered: continue
-                         c_rendered = c_rendered.strip()
-                         if d_input_clean in c_rendered or c_rendered in d_input_clean:
-                             target_rec = cand
-                             break
-            
-            if target_rec:
-                matched_count += 1
-                
-                # 判定越狱状态
-                is_jb = False
-                jb_val = detail.get("jailbreak")
-                if jb_val:
-                    if isinstance(jb_val, bool) and jb_val is True:
-                        is_jb = True
-                    elif isinstance(jb_val, (int, float)) and jb_val > 0:
-                        is_jb = True
-                    elif isinstance(jb_val, str) and jb_val.lower() not in ["0", "false", "no", "none", ""]:
-                        is_jb = True
-                
-                status_val = detail.get("status")
-                if status_val and str(status_val).lower() == "jailbreak":
+            d_input = detail.get("input") or ""
+            print(f"[run_eval_only] detail input source: {'input' if d_input else 'empty'}")
+            is_jb = False
+            jb_val = detail.get("jailbreak")
+            if jb_val:
+                if isinstance(jb_val, bool) and jb_val is True:
                     is_jb = True
-                
-                cid = target_rec.get("custom_id")
-                cat = target_rec.get("category")
-                
-                # 清空原字典
-                target_rec.clear()
-                
-                # 回填保留字段
-                if cid is not None: target_rec["custom_id"] = cid
-                if cat is not None: target_rec["category"] = cat
-                target_rec["rendered"] = d_input or "" # 传给模型的输入内容
-                target_rec["eval_result"] = detail
-                
-                if is_jb:
-                    jailbreak_count_local += 1
-                    
-                    t_id = "unknown"
-                d_id = None
-                if cid:
-                    parts = cid.split("::")
-                    if len(parts) >= 2:
-                        t_id = parts[0]
-                        try: d_id = int(parts[1])
-                        except: pass
-                
-                # 更新 target_rec 包含 template_id 供后续保存
-                target_rec["template_id"] = t_id
-                target_rec["data_id"] = d_id
-                
-                full_rec_for_analysis = {
-                    "template_id": t_id,
-                    "data_id": d_id,
-                    # "category": cat # analysis 内部会查 idx_map，不需要这里传 category
-                }
-                jailbreak_records.append(full_rec_for_analysis)
+                elif isinstance(jb_val, (int, float)) and jb_val > 0:
+                    is_jb = True
+                elif isinstance(jb_val, str) and jb_val.lower() not in ["0", "false", "no", "none", ""]:
+                    is_jb = True
+            status_val = detail.get("status")
+            if status_val and str(status_val).lower() == "jailbreak":
+                is_jb = True
+            matched_count += 1
+            if is_jb:
+                jailbreak_count_local += 1
+            rec_obj = {"rendered": d_input, "eval_result": detail}
+            if isinstance(d_input, str) and d_input.strip():
+                src = prompt_map.get(d_input.strip())
+                if src:
+                    if src.get("question") is not None: rec_obj["question"] = src.get("question")
+                    if src.get("category") is not None: rec_obj["category"] = src.get("category")
+                    if src.get("subcategory") is not None: rec_obj["subcategory"] = src.get("subcategory")
+                    if src.get("template_id") is not None: rec_obj["template_id"] = src.get("template_id")
+                    if src.get("data_id") is not None: rec_obj["data_id"] = src.get("data_id")
+            if is_jb:
+                jailbreak_records_full.append(rec_obj)
+            else:
+                safe_records_full.append(rec_obj)
 
         
-        # 准备分析报告
-        # 加载 idx_map
-        items = _load_tc260()
+        # Analysis（仅针对 Jailbreak）
+        items_idx = _load_tc260()
         idx_map: Dict[int, Dict[str, Any]] = {}
-        for it in items:
-            try: idx_map[int(it.get("idx"))] = it
-            except: pass
-            
-        total_count = len(records)
-        analysis_report = _analyze_results(jailbreak_records, total_count, idx_map)
+        for it in items_idx:
+            try:
+                idx_map[int(it.get("idx"))] = it
+            except:
+                pass
+        total_count = len(jailbreak_records_full) + len(safe_records_full)
+        jailbreak_records_for_analysis: List[Dict[str, Any]] = []
+        for rec in jailbreak_records_full:
+            det = rec.get("eval_result") or {}
+            is_jb2 = False
+            jv = det.get("jailbreak")
+            if jv:
+                if isinstance(jv, bool) and jv is True:
+                    is_jb2 = True
+                elif isinstance(jv, (int, float)) and jv > 0:
+                    is_jb2 = True
+                elif isinstance(jv, str) and jv.lower() not in ["0", "false", "no", "none", ""]:
+                    is_jb2 = True
+            sv = det.get("status")
+            if sv and str(sv).lower() == "jailbreak":
+                is_jb2 = True
+            if is_jb2:
+                jailbreak_records_for_analysis.append({
+                    "template_id": rec.get("template_id", "unknown"),
+                    "data_id": rec.get("data_id"),
+                    "category": rec.get("category"),
+                    "subcategory": rec.get("subcategory")
+                })
+        analysis_report = _analyze_results(jailbreak_records_for_analysis, total_count, idx_map)
         
-        final_data = {
+        final_data_jb = {
             "final_probability": analysis_report.get("total_success_rate", 0),
             "total_jailbreak_records": jailbreak_count_local,
             "total_combinations": total_count,
-            "records": records, 
+            "records": jailbreak_records_full, 
             "analysis": analysis_report,
             "original_file": req.file_name,
-            # "eval_session_id": session_id,
-            "eval_session_id": "batch_aggregated", # session_id,
+            "eval_session_id": "batch_aggregated",
+        }
+        final_data_safe = {
+            "total_safe_records": len(safe_records_full),
+            "total_combinations": total_count,
+            "records": safe_records_full, 
+            "original_file": req.file_name,
+            "eval_session_id": "batch_aggregated",
         }
         
-        with result_path.open("w", encoding="utf-8") as f:
-            json.dump(final_data, f, ensure_ascii=False, indent=2)
+        with result_path_jb.open("w", encoding="utf-8") as f:
+            json.dump(final_data_jb, f, ensure_ascii=False, indent=2)
+        with result_path_safe.open("w", encoding="utf-8") as f:
+            json.dump(final_data_safe, f, ensure_ascii=False, indent=2)
             
         return {
             "status": "200", 
             "message": "Eval completed", 
             "data": {
-                "result_file": result_filename,
+                "result_file_jailbreak": result_filename_jb,
+                "result_file_safe": result_filename_safe,
                 "jailbreak_count": jailbreak_count_local,
+                "safe_count": len(safe_records_full),
                 "total": total_count,
                 "analysis": analysis_report
             }
@@ -671,9 +624,10 @@ async def run_eval_only(req: EvalOnlyRequest) -> Dict[str, Any]:
         return {"status": "500", "message": str(e), "data": None}
 
 
+
 @app.post("/run_defense_test")
 async def run_defense_test(req: DefenseTestRequest) -> Dict[str, Any]:
-    """读取已保存的评估结果文件，对其中的每条记录调用防御接口进行测试，并统计识别成功率"""
+    # 防御能力测试：对评估结果中的每条记录调用防御接口，统计识别率并生成报告
     
     # 1. 定位文件
     # 尝试在 ADAPTIVE_RESULT_DIR 查找
@@ -706,17 +660,10 @@ async def run_defense_test(req: DefenseTestRequest) -> Dict[str, Any]:
             "Authorization": f"Bearer {Config.DEFENSE_TEST_TOKEN}"
         }
         
-        # 并发控制，避免瞬间压垮本地服务
-        # 这里为了简单，先串行，如果慢可以改 async/gather
-        
         for idx, rec in enumerate(records):
-            # 获取 input text (rendered prompt)
-            # Adaptive 结构: rec["rendered"]
-            # Batch 结构: rec["prompt"]
+
             prompt_text = rec.get("rendered") or rec.get("input")
-            
-            # 获取 template_id (如果是 Adaptive Result 结构，通常包含在 rec 中)
-            # 如果没有，尝试从 custom_id 解析
+
             template_id = rec.get("template_id")
             if not template_id:
                 cid = rec.get("custom_id")
@@ -754,8 +701,6 @@ async def run_defense_test(req: DefenseTestRequest) -> Dict[str, Any]:
                     results_detail.append({
                         "index": idx,
                         "template_id": template_id,  # 新增
-                        # "detected": detected,
-                        # "risk_score": r_json.get("risk_score"),
                         "request_content": prompt_text,
                         "response_content": r_json
                     })
@@ -766,7 +711,6 @@ async def run_defense_test(req: DefenseTestRequest) -> Dict[str, Any]:
                     results_detail.append({
                         "index": idx,
                         "template_id": template_id,  # 新增
-                        # "detected": False,
                         "error": f"API Error {resp.status_code}: {resp.text}",
                         "request_content": prompt_text
                     })
@@ -777,7 +721,6 @@ async def run_defense_test(req: DefenseTestRequest) -> Dict[str, Any]:
                 results_detail.append({
                     "index": idx,
                     "template_id": template_id,  # 新增
-                    # "detected": False,
                     "error": f"Request Error: {e}",
                     "request_content": prompt_text
                 })
@@ -828,8 +771,135 @@ async def run_defense_test(req: DefenseTestRequest) -> Dict[str, Any]:
         traceback.print_exc()
         return {"status": "500", "message": f"Defense test failed: {e}", "data": None}
 
+@app.post("/format_jailbreak_test")
+async def format_jailbreak_test(req: LabelStudioFormatRequest) -> Dict[str, Any]:
+    # Label Studio 格式化：将现有数据转换为 Label Studio 需要的标注格式并输出到文件
+    try:
+        candidates = [
+            ADAPTIVE_RESULT_DIR / req.file_name,
+            OUTPUTS_DIR / req.file_name
+        ]
+        if not req.file_name.lower().endswith(".json"):
+            candidates.append(ADAPTIVE_RESULT_DIR / f"{req.file_name}.json")
+            candidates.append(OUTPUTS_DIR / f"{req.file_name}.json")
+        src_path = None
+        for p in candidates:
+            if p.exists():
+                src_path = p
+                break
+        if not src_path:
+            return {"status": "404", "message": f"File not found: {req.file_name}", "data": None}
+        with src_path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+        items = []
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            items = raw.get("data") or raw.get("records") or []
+        if not isinstance(items, list):
+            items = []
+        formatted = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            prompt = it.get("prompt") or ""
+            question = it.get("question") or ""
+            category = it.get("category") or ""
+            subcategory = it.get("subcategory") or ""
+            template_id = it.get("template_id")
+            data_id = it.get("data_id")
+            formatted.append({
+                "data": {"text": prompt},
+                "annotations": [{
+                    "result": [
+                        {"from_name": "question", "to_name": "text", "type": "textarea", "value": {"text": question}},
+                        {"from_name": "category", "to_name": "text", "type": "textarea", "value": {"text": category}},
+                        {"from_name": "subcategory", "to_name": "text", "type": "textarea", "value": {"text": subcategory}},
+                        {"from_name": "template_id", "to_name": "text", "type": "textarea", "value": {"text": str(template_id) if template_id is not None else ""}},
+                        {"from_name": "data_id", "to_name": "text", "type": "textarea", "value": {"text": str(data_id) if data_id is not None else ""}}
+                    ]
+                }]
+            })
+        out_dir = ADAPTIVE_RESULT_DIR / "label-studio"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        base = src_path.stem
+        out_name = f"{base}-Formatted.json" if not base.endswith("-Formatted") else f"{base}.json"
+        out_path = out_dir / out_name
+        with out_path.open("w", encoding="utf-8") as f:
+            json.dump(formatted, f, ensure_ascii=False, indent=2)
+        return {"status": "200", "message": "Formatted file generated", "data": {"output_file": str(out_path)}}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "500", "message": str(e), "data": None}
+
+class LSCreateProjectBody(BaseModel):
+    title: str | None = None
+    label_config: str | None = None
+    extra: Dict[str, Any] | None = None
+
+class LSImportJsonBody(BaseModel):
+    items: List[Dict[str, Any]]
+
+class LSImportFileBody(BaseModel):
+    file_path: str | None = None
+    file_name: str | None = None
+
+class LSCreateAndImportBody(BaseModel):
+    title: str | None = None
+    project_id: int | None = None
+    items: List[Dict[str, Any]] | None = None
+    file_path: str | None = None
+    file_name: str | None = None
+
+@app.get("/labelstudio/projects")
+def ls_list_projects_api() -> Dict[str, Any]:
+    return ls_list_projects()
+
+@app.post("/labelstudio/projects")
+def ls_create_project_api(body: LSCreateProjectBody) -> Dict[str, Any]:
+    t = body.title or "tc260检测"
+    return ls_create_project(t, body.label_config, body.extra)
+
+@app.post("/labelstudio/projects/{project_id}/import-json")
+def ls_import_json_api(project_id: int, body: LSImportJsonBody) -> Dict[str, Any]:
+    return ls_import_dataset_json(project_id, body.items)
+
+@app.post("/labelstudio/projects/{project_id}/import-file")
+def ls_import_file_api(project_id: int, body: LSImportFileBody) -> Dict[str, Any]:
+    if body.file_path:
+        return ls_import_dataset_file(project_id, body.file_path)
+    if body.file_name:
+        fixed_dir = ADAPTIVE_RESULT_DIR / "label-studio"
+        file_path = str(fixed_dir / body.file_name)
+        return ls_import_dataset_file(project_id, file_path)
+    return {"status": "400", "message": "file_path or file_name is required", "data": None}
+
+@app.post("/labelstudio/create-and-import")
+def ls_create_and_import_api(body: LSCreateAndImportBody) -> Dict[str, Any]:
+    pid = body.project_id
+    created = None
+    if not pid:
+        resp = ls_create_project(body.title or "tc260检测", None, None)
+        if resp.get("status") != "200":
+            return resp
+        created = resp.get("data") or {}
+        pid = created.get("id")
+        if not pid:
+            return {"status": "500", "message": "No project id returned", "data": None}
+    if body.file_path:
+        return ls_import_dataset_file(pid, body.file_path)
+    if body.file_name:
+        fixed_dir = ADAPTIVE_RESULT_DIR / "label-studio"
+        file_path = str(fixed_dir / body.file_name)
+        return ls_import_dataset_file(pid, file_path)
+    if body.items:
+        return ls_import_dataset_json(pid, body.items)
+    return {"status": "400", "message": "No dataset payload provided", "data": None}
+
 
 def main():
+    # 本地启动入口：运行 uvicorn 以启动 FastAPI 服务
     """Run uvicorn server for local testing."""
     try:
         import uvicorn

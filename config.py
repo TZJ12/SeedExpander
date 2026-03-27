@@ -82,6 +82,11 @@ class Config:
     DEFENSE_TEST_URL = "http://10.30.3.141:8010/scan/injection"
     DEFENSE_TEST_TOKEN = "1tdhblkfcdhx2awjjzasztglsgdhzkglcsdbf"
 
+
+    # ==================== Label Studio 服务配置 ====================   
+    LABEL_STUDIO_URL = "http://localhost:8080"
+    LABEL_STUDIO_TOKEN = "726a155618014b08d3694e7dc736e5492272fd9e"
+
     # ==================== 通用配置 ====================
     # 随机种子控制
     DEFAULT_SEED = None  # None表示使用随机种子
