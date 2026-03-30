@@ -29,6 +29,8 @@ def create_project(title: str = "tc260检测", label_config: Optional[str] = Non
     except Exception as e:
         return {"status": "500", "message": str(e), "data": None}
 
+
+
 def import_dataset_json(project_id: int, items: List[Dict[str, Any]]) -> Dict[str, Any]:
     base_url = (Config.LABEL_STUDIO_URL or "").rstrip("/")
     url = f"{base_url}/api/projects/{project_id}/import"
@@ -119,6 +121,22 @@ def download_export(project_id: int, export_pk: int, export_type: Optional[str] 
 def delete_export(project_id: int, export_pk: int) -> Dict[str, Any]:
     base_url = (Config.LABEL_STUDIO_URL or "").rstrip("/")
     url = f"{base_url}/api/projects/{project_id}/exports/{export_pk}"
+    try:
+        r = requests.delete(url, json={}, headers=_headers_json(), timeout=60)
+        if r.status_code in (200, 201, 204):
+            data = None
+            try:
+                data = r.json()
+            except Exception:
+                data = None
+            return {"status": "200", "message": "deleted", "data": data}
+        return {"status": str(r.status_code), "message": r.text, "data": None}
+    except Exception as e:
+        return {"status": "500", "message": str(e), "data": None}
+
+def delete_project(project_id: int) -> Dict[str, Any]:
+    base_url = (Config.LABEL_STUDIO_URL or "").rstrip("/")
+    url = f"{base_url}/api/projects/{project_id}/"
     try:
         r = requests.delete(url, json={}, headers=_headers_json(), timeout=60)
         if r.status_code in (200, 201, 204):

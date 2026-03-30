@@ -6,23 +6,23 @@
     <title>SeedExpander 控制台</title>
     <style>
         :root {
-            --primary-color: #007bff;
-            --secondary-color: #6c757d;
+            --primary-color: #2563eb;
+            --secondary-color: #64748b;
             --success-color: #28a745;
             --danger-color: #dc3545;
-            --bg-color: #f8f9fa;
+            --bg-color: #f5f7fb;
             --panel-bg: #ffffff;
-            --border-color: #dee2e6;
+            --border-color: #e5e7eb;
         }
         
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: var(--bg-color); color: #333; }
         
         .container { display: flex; gap: 20px; max-width: 1400px; margin: 0 auto; height: calc(100vh - 40px); }
-        .left-panel { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); overflow-y: auto; }
-        .right-panel { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .left-panel { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); padding: 20px; border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,0.08); overflow-y: auto; }
+        .right-panel { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); padding: 20px; border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,0.08); }
         
         h1 { margin-top: 0; font-size: 24px; color: #333; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; }
-        h2 { font-size: 18px; margin-top: 20px; margin-bottom: 10px; color: #555; border-left: 4px solid var(--primary-color); padding-left: 10px; }
+        h2 { font-size: 18px; margin-top: 18px; margin-bottom: 8px; color: #0f172a; border-left: 4px solid var(--primary-color); padding-left: 10px; }
         h3 { font-size: 16px; margin-top: 15px; margin-bottom: 5px; color: #666; }
         
         /* Form Elements */
@@ -53,16 +53,16 @@
         
         /* Action Buttons */
         .btn-toolbar { display: flex; gap: 10px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color); }
-        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 15px; font-weight: 500; transition: background 0.2s; flex: 1; }
+        .btn { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; flex: 0 0 auto; }
         .btn-primary { background-color: var(--primary-color); color: white; }
-        .btn-primary:hover { background-color: #0069d9; }
+        .btn-primary:hover { background-color: #1d4ed8; }
         .btn-secondary { background-color: var(--secondary-color); color: white; }
-        .btn-secondary:hover { background-color: #5a6268; }
+        .btn-secondary:hover { background-color: #475569; }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
         
         /* Logs */
         .log-window { 
-            flex: 1; background-color: #1e1e1e; color: #00ff00; 
+            flex: 1; background-color: #0f172a; color: #e2e8f0; 
             font-family: 'Consolas', 'Monaco', monospace; padding: 15px; 
             border-radius: 4px; overflow-y: auto; white-space: pre-wrap; font-size: 13px; 
             position: relative;
@@ -94,6 +94,11 @@
         .collapsed #resultContent { max-height: 0; padding: 0; margin: 0; }
 
         .helper-text { font-size: 12px; color: #888; margin-top: 2px; }
+        
+        details.collapsible { border: 1px solid var(--border-color); border-radius: 10px; background: #fff; margin-top: 12px; box-shadow: 0 2px 8px rgba(15,23,42,0.06); }
+        details.collapsible summary { list-style: none; padding: 12px 14px; font-size: 16px; font-weight: 700; color: #0f172a; border-left: 4px solid var(--primary-color); cursor: pointer; }
+        details.collapsible summary::-webkit-details-marker { display: none; }
+        details.collapsible .content { padding: 12px 14px; }
     </style>
 </head>
 <body>
@@ -164,73 +169,94 @@
                 <label>自适应评估最大执行轮数 (Max Loops) </label>
                 <input type="number" id="maxLoops" class="form-control" value="3" min="1" max="10">
             </div>
-
-            <!-- 4. Standalone Tools -->
-            <h2>4. 独立工具 (Standalone Tools)</h2>
             <div class="form-group">
-                <label>目标文件名 (Target Filename)</label>
-                <div style="display: flex; gap: 10px;">
-                    <input type="text" id="evalFileName" class="form-control" placeholder="输入文件名 (e.g. batch_output.json)">
-                    <button type="button" class="btn btn-secondary" style="width: auto; white-space: nowrap;" onclick="triggerManualEval()">
-                        🚀 仅评估 (Run Eval)
-                    </button>
-                    <button type="button" class="btn btn-secondary" style="width: auto; white-space: nowrap;" onclick="triggerFormatLS()">
-                        🧾 生成 Label Studio 格式
-                    </button>
+                <label>Label Studio 自动上传</label>
+                <div style="display:flex; gap:15px; margin-bottom:8px;">
+                    <label style="font-weight: normal; cursor: pointer;">
+                        <input type="radio" name="lsUploadMode" value="existing" checked> 使用已有项目
+                    </label>
+                    <label style="font-weight: normal; cursor: pointer;">
+                        <input type="radio" name="lsUploadMode" value="new"> 新建项目
+                    </label>
                 </div>
-                <div class="helper-text">文件需位于 eval 目录下</div>
-            </div>
-
-            <h2>5. Label Studio 联动</h2>
-            <div class="form-group">
-                <div style="display: flex; gap: 10px; align-items: center; margin-bottom:8px;">
-                    <div style="flex: 1;">
-                        <label>最近格式化输出文件</label>
-                        <input type="text" id="lsLastFile" class="form-control" placeholder="尚未生成" readonly>
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px;">
+                    <div style="flex:1;">
+                        <select id="lsProjectSelectAuto" class="form-control"></select>
                     </div>
                     <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="fetchLSProjects()">🔄 刷新项目列表</button>
                 </div>
-                <div style="display: flex; gap: 10px; align-items: center; margin-bottom:8px;">
-                    <div style="flex: 1;">
-                        <label>新建项目标题</label>
-                        <input type="text" id="lsNewTitle" class="form-control" value="tc260检测">
-                    </div>
-                    <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="createAndUploadToLS()">🆕 新建并上传</button>
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px;">
+                    <input type="text" id="lsNewTitleInline" class="form-control" placeholder="新建项目名称">
                 </div>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <div style="flex: 1;">
-                        <label>选择已有项目</label>
-                        <select id="lsProjectSelect" class="form-control"></select>
-                    </div>
-                    <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="uploadToExistingProject()">⬆️ 上传到已选项目</button>
-                </div>
-                <div style="display: flex; gap: 10px; align-items: center; margin-top:10px;">
-                    <div style="flex: 1;">
-                        <label>导出任务列表</label>
-                        <select id="lsExportSelect" class="form-control"></select>
-                    </div>
-                    <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="fetchLSExports()">🔄 刷新导出</button>
-                    <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="createLSExport()">🆕 创建导出</button>
-                    <button type="button" class="btn btn-danger" style="width:auto; white-space:nowrap;" onclick="deleteLSExport()">🗑 删除导出</button>
-                </div>
-                <div style="display: flex; gap: 10px; align-items: center; margin-top:10px;">
-                    <input type="text" id="lsExportType" class="form-control" placeholder="exportType 可选, 如 JSON">
-                    <label style="display:flex; align-items:center; gap:6px;">
-                        <input type="checkbox" id="lsDownloadAll"> 下载全部
-                    </label>
-                    <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="downloadLSExport()">⬇️ 下载导出</button>
-                </div>
+                <div class="helper-text">已有项目下拉与新建标题见下方“Label Studio 联动”区域</div>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:10px;">
+                <button id="btnRunAdaptive" class="btn btn-primary" style="width:auto;" onclick="runAdaptive()">▶️ 开始自适应评估 (Adaptive Eval)</button>
             </div>
 
-            <!-- Action Buttons -->
-            <div class="btn-toolbar">
-                <button id="btnSaveBatch" class="btn btn-secondary" onclick="runBatchSave()">
-                    💾 仅生成试题 (Save Batch)
-                </button>
-                <button id="btnRunAdaptive" class="btn btn-primary" onclick="runAdaptive()">
-                    ▶️ 开始自适应评估 (Adaptive Eval)
-                </button>
-            </div>
+            <!-- 4. Standalone Tools -->
+            <details class="collapsible" id="toolsSection">
+                <summary>4. 独立工具 (Standalone Tools)</summary>
+                <div class="content">
+                    <div class="form-group">
+                        <label>目标文件名 (Target Filename)</label>
+                        <input type="text" id="evalFileName" class="form-control" placeholder="输入文件名 (e.g. batch_output.json)">
+                        <div class="helper-text">文件需位于 eval 目录下</div>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <button id="btnSaveBatch" class="btn btn-secondary" style="width:auto;" onclick="runBatchSave()">� 仅生成试题 (Save Batch)</button>
+                        <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="triggerManualEval()">🚀 仅评估 (Run Eval)</button>
+                        <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="triggerFormatLS()">🧾 转换为 Label Studio 格式</button>
+                    </div>
+                </div>
+            </details>
+
+            <details class="collapsible" id="lsSection">
+                <summary>5. Label Studio 联动</summary>
+                <div class="content">
+                    <div class="form-group">
+                        <div style="display: flex; gap: 10px; align-items: center; margin-bottom:8px;">
+                            <div style="flex: 1;">
+                                <label>最近格式化输出文件</label>
+                                <input type="text" id="lsLastFile" class="form-control" placeholder="尚未生成" readonly>
+                            </div>
+                            <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="fetchLSProjects()">🔄 刷新项目列表</button>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center; margin-bottom:8px;">
+                            <div style="flex: 1;">
+                                <label>新建项目标题</label>
+                                <input type="text" id="lsNewTitle" class="form-control" value="tc260检测">
+                            </div>
+                            <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="createAndUploadToLS()">🆕 新建并上传</button>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <div style="flex: 1;">
+                                <label>选择已有项目</label>
+                                <select id="lsProjectSelect" class="form-control"></select>
+                            </div>
+                            <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="uploadToExistingProject()">⬆️ 上传到已选项目</button>
+                            <button type="button" class="btn btn-danger" style="width:auto; white-space:nowrap;" onclick="deleteLSProject()">🗑 删除项目</button>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center; margin-top:10px;">
+                            <div style="flex: 1;">
+                                <label>导出任务列表</label>
+                                <select id="lsExportSelect" class="form-control"></select>
+                            </div>
+                            <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="fetchLSExports()">🔄 刷新导出</button>
+                            <button type="button" class="btn btn-secondary" style="width:auto; white-space:nowrap;" onclick="createLSExport()">🆕 创建导出</button>
+                            <button type="button" class="btn btn-danger" style="width:auto; white-space:nowrap;" onclick="deleteLSExport()">🗑 删除导出</button>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center; margin-top:10px;">
+                            <input type="text" id="lsExportType" class="form-control" placeholder="exportType 可选, 如 JSON">
+                            <label style="display:flex; align-items:center; gap:6px;">
+                                <input type="checkbox" id="lsDownloadAll"> 下载全部
+                            </label>
+                            <button type="button" class="btn btn-primary" style="width:auto; white-space:nowrap;" onclick="downloadLSExport()">⬇️ 下载导出</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
         </div>
         
         <!-- Right Panel: Logs & Results -->
@@ -257,6 +283,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             fetchTemplates();
             fetchCategories();
+            fetchLSProjects();
         });
 
         function toggleResult() {
@@ -535,6 +562,25 @@
                         }
                     }
                 };
+                
+                (function applyLSOptions() {
+                    const modeEl = document.querySelector('input[name="lsUploadMode"]:checked');
+                    const mode = modeEl ? modeEl.value : 'existing';
+                    payload.options = payload.options || {};
+                    payload.options.ls_upload = true; // 默认开启
+                    if (mode === 'existing') {
+                        const selAuto = document.getElementById('lsProjectSelectAuto');
+                        const sel = document.getElementById('lsProjectSelect');
+                        const pidVal = (selAuto && selAuto.value ? selAuto.value : (sel && sel.value ? sel.value : '0'));
+                        const pid = parseInt(pidVal);
+                        if (pid) payload.options.ls_project_id = pid;
+                    } else {
+                        const titleInline = document.getElementById('lsNewTitleInline');
+                        const titleEl = document.getElementById('lsNewTitle');
+                        const title = (titleInline && titleInline.value ? titleInline.value.trim() : (titleEl && titleEl.value ? titleEl.value.trim() : ''));
+                        if (title) payload.options.ls_project_title = title;
+                    }
+                })();
                 
                 updateStatus('running', '正在提交自适应任务...');
                 appendLog('提交自适应任务...');
@@ -886,6 +932,22 @@
                     opt.textContent = '无项目';
                     sel.appendChild(opt);
                 }
+                const selAuto = document.getElementById('lsProjectSelectAuto');
+                if (selAuto) {
+                    selAuto.innerHTML = '';
+                    results.forEach(p => {
+                        const opt = document.createElement('option');
+                        opt.value = p.id;
+                        opt.textContent = `${p.id} - ${p.title}`;
+                        selAuto.appendChild(opt);
+                    });
+                    if (!results.length) {
+                        const opt = document.createElement('option');
+                        opt.value = '';
+                        opt.textContent = '无项目';
+                        selAuto.appendChild(opt);
+                    }
+                }
                 appendLog('刷新 Label Studio 项目列表完成');
             } catch (e) {
                 alert('获取项目失败: ' + e.message);
@@ -1115,6 +1177,49 @@
                 fetchLSExports();
             } catch (e) {
                 alert('删除导出失败: ' + e.message);
+            }
+        }
+
+        async function deleteLSProject() {
+            const sel = document.getElementById('lsProjectSelect');
+            const pid = parseInt(sel.value);
+            if (!pid) {
+                alert('请先选择项目');
+                return;
+            }
+            if (!confirm(`确认删除项目 ${pid} ？该项目及其任务将在 Label Studio 中被删除。`)) return;
+            try {
+                const res = await fetch(`/labelstudio/projects/${pid}`, {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({})
+                });
+                let json = null;
+                try {
+                    json = await res.json();
+                } catch (e) {
+                    const txt = await res.text();
+                    alert('删除项目失败: ' + txt);
+                    return;
+                }
+                if (json.status !== "200") {
+                    alert(json.message || '删除项目失败');
+                    return;
+                }
+                alert('已删除项目');
+                appendLog(`已删除项目 ${pid}`);
+                // 刷新项目与导出列表
+                await fetchLSProjects();
+                const expSel = document.getElementById('lsExportSelect');
+                if (expSel) {
+                    expSel.innerHTML = '';
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = '无导出';
+                    expSel.appendChild(opt);
+                }
+            } catch (e) {
+                alert('删除项目失败: ' + e.message);
             }
         }
     </script>
