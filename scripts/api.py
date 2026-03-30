@@ -190,22 +190,22 @@ async def execute_batch(req: BatchExecRequest) -> Dict[str, Any]:
     for i in range(m):
         tpl_id = req.template_ids[i]
         
-        # 检查模板类型，如果是 prompt_leaking，则只生成一条任务
+        # 检查模板类型：对于 prompt_leaking 或 code_injection，仅保留首个 data_id
         template_info = resolve_template(tpl_id)
-        is_leaking = False
+        is_single_only = False
         if template_info:
             raw_attack_type = template_info.get("attack_type")
             if isinstance(raw_attack_type, list):
                 attack_type_list = [str(x).strip().lower() for x in raw_attack_type if x]
-                if "prompt_leaking" in attack_type_list:
-                    is_leaking = True
+                if ("prompt_leaking" in attack_type_list) or ("code_injection" in attack_type_list):
+                    is_single_only = True
             else:
                 attack_type = (raw_attack_type or "").strip().lower()
-                if attack_type == "prompt_leaking":
-                    is_leaking = True
+                if attack_type in ["prompt_leaking", "code_injection"]:
+                    is_single_only = True
         
-        if is_leaking:
-            # 对于 prompt_leaking，只取第一个 data_id 生成一次
+        if is_single_only:
+            # 仅保留第一个 data_id 生成一次
             if data_ids_int:
                 did = data_ids_int[0]
                 key = (tpl_id, did)
@@ -563,34 +563,34 @@ async def format_jailbreak_test(req: LabelStudioFormatRequest) -> Dict[str, Any]
  
 
 @app.get("/labelstudio/projects")
-def ls_list_projects_api() -> Dict[str, Any]:
-    return ls_list_projects()
+async def ls_list_projects_api() -> Dict[str, Any]:
+    return await ls_list_projects()
 
 @app.post("/labelstudio/projects")
-def ls_create_project_api(body: LSCreateProjectBody) -> Dict[str, Any]:
+async def ls_create_project_api(body: LSCreateProjectBody) -> Dict[str, Any]:
     t = body.title or "tc260检测"
-    return ls_create_project(t, body.label_config, body.extra)
+    return await ls_create_project(t, body.label_config, body.extra)
 
 @app.post("/labelstudio/projects/{project_id}/import-json")
-def ls_import_json_api(project_id: int, body: LSImportJsonBody) -> Dict[str, Any]:
-    return ls_import_dataset_json(project_id, body.items)
+async def ls_import_json_api(project_id: int, body: LSImportJsonBody) -> Dict[str, Any]:
+    return await ls_import_dataset_json(project_id, body.items)
 
 @app.post("/labelstudio/projects/{project_id}/import-file")
-def ls_import_file_api(project_id: int, body: LSImportFileBody) -> Dict[str, Any]:
+async def ls_import_file_api(project_id: int, body: LSImportFileBody) -> Dict[str, Any]:
     if body.file_path:
-        return ls_import_dataset_file(project_id, body.file_path)
+        return await ls_import_dataset_file(project_id, body.file_path)
     if body.file_name:
         fixed_dir = ADAPTIVE_RESULT_DIR / "label-studio"
         file_path = str(fixed_dir / body.file_name)
-        return ls_import_dataset_file(project_id, file_path)
+        return await ls_import_dataset_file(project_id, file_path)
     return {"status": "400", "message": "file_path or file_name is required", "data": None}
 
 @app.post("/labelstudio/create-and-import")
-def ls_create_and_import_api(body: LSCreateAndImportBody) -> Dict[str, Any]:
+async def ls_create_and_import_api(body: LSCreateAndImportBody) -> Dict[str, Any]:
     pid = body.project_id
     created = None
     if not pid:
-        resp = ls_create_project(body.title or "tc260检测", None, None)
+        resp = await ls_create_project(body.title or "tc260检测", None, None)
         if resp.get("status") != "200":
             return resp
         created = resp.get("data") or {}
@@ -598,26 +598,26 @@ def ls_create_and_import_api(body: LSCreateAndImportBody) -> Dict[str, Any]:
         if not pid:
             return {"status": "500", "message": "No project id returned", "data": None}
     if body.file_path:
-        return ls_import_dataset_file(pid, body.file_path)
+        return await ls_import_dataset_file(pid, body.file_path)
     if body.file_name:
         fixed_dir = ADAPTIVE_RESULT_DIR / "label-studio"
         file_path = str(fixed_dir / body.file_name)
-        return ls_import_dataset_file(pid, file_path)
+        return await ls_import_dataset_file(pid, file_path)
     if body.items:
-        return ls_import_dataset_json(pid, body.items)
+        return await ls_import_dataset_json(pid, body.items)
     return {"status": "400", "message": "No dataset payload provided", "data": None}
 
 @app.get("/labelstudio/projects/{project_id}/exports")
-def ls_list_exports_api(project_id: int) -> Dict[str, Any]:
-    return ls_list_exports(project_id)
+async def ls_list_exports_api(project_id: int) -> Dict[str, Any]:
+    return await ls_list_exports(project_id)
 
 @app.post("/labelstudio/projects/{project_id}/exports")
-def ls_create_export_api(project_id: int, body: LSCreateExportBody) -> Dict[str, Any]:
-    return ls_create_export(project_id, body.payload or {})
+async def ls_create_export_api(project_id: int, body: LSCreateExportBody) -> Dict[str, Any]:
+    return await ls_create_export(project_id, body.payload or {})
 
 @app.get("/labelstudio/projects/{project_id}/exports/{export_pk}/download")
-def ls_download_export_api(project_id: int, export_pk: int, exportType: str | None = None, download_all_tasks: bool | None = None) -> Dict[str, Any]:
-    res = ls_download_export(project_id, export_pk, exportType, download_all_tasks)
+async def ls_download_export_api(project_id: int, export_pk: int, exportType: str | None = None, download_all_tasks: bool | None = None) -> Dict[str, Any]:
+    res = await ls_download_export(project_id, export_pk, exportType, download_all_tasks)
     if res.get("status") != "200":
         return res
     data = res.get("data") or {}
@@ -640,12 +640,12 @@ def ls_download_export_api(project_id: int, export_pk: int, exportType: str | No
     return {"status": "200", "message": "downloaded", "data": {"file_path": str(out_path), "file_name": out_name}}
 
 @app.delete("/labelstudio/projects/{project_id}/exports/{export_pk}")
-def ls_delete_export_api(project_id: int, export_pk: int) -> Dict[str, Any]:
-    return ls_delete_export(project_id, export_pk)
+async def ls_delete_export_api(project_id: int, export_pk: int) -> Dict[str, Any]:
+    return await ls_delete_export(project_id, export_pk)
 
 @app.delete("/labelstudio/projects/{project_id}")
-def ls_delete_project_api(project_id: int) -> Dict[str, Any]:
-    return ls_delete_project(project_id)
+async def ls_delete_project_api(project_id: int) -> Dict[str, Any]:
+    return await ls_delete_project(project_id)
 
 
 def main():

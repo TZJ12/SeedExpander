@@ -396,24 +396,24 @@ def _make_ls_formatted_items(jb_records: List[Dict[str, Any]]) -> List[Dict[str,
 def _adaptive_build_current_pairs(tpls: List[str], target_dids: List[int], successful_pairs: List[Tuple[str, int]]) -> List[Dict[str, Any]]:
     """
     生成当前阶段待评估的 (template_id, data_id) 组合；
-    对 prompt_leaking 类型仅取首个 data_id；已成功的组合将被跳过。
+    对 prompt_leaking / code_injection 类型仅取首个 data_id；已成功的组合将被跳过。
     """
     current_pairs: List[Dict[str, Any]] = []
     from scripts.template_executor import resolve_template
     for t in tpls:
         template_info = resolve_template(t)
-        is_leaking = False
+        is_single_only = False
         if template_info:
             raw_attack_type = template_info.get("attack_type")
             if isinstance(raw_attack_type, list):
                 attack_type_list = [str(x).strip().lower() for x in raw_attack_type if x]
-                if "prompt_leaking" in attack_type_list:
-                    is_leaking = True
+                if ("prompt_leaking" in attack_type_list) or ("code_injection" in attack_type_list):
+                    is_single_only = True
             else:
                 attack_type = (raw_attack_type or "").strip().lower()
-                if attack_type == "prompt_leaking":
-                    is_leaking = True
-        if is_leaking:
+                if attack_type in ["prompt_leaking", "code_injection"]:
+                    is_single_only = True
+        if is_single_only:
             if target_dids:
                 d = target_dids[0]
                 if (t, d) not in successful_pairs:
@@ -685,10 +685,10 @@ async def _adaptive_run_phase_tasks(
                                         added_mb += sz
                                     else:
                                         break
-                                if upload_list:
-                                    ls_items = _make_ls_formatted_items(upload_list)
-                                    _ = await asyncio.to_thread(ls_import_dataset_json, pid, ls_items)
-                                    uploaded_counter["size_mb"] = float(uploaded_counter.get("size_mb", 0.0)) + added_mb
+                        if upload_list:
+                            ls_items = _make_ls_formatted_items(upload_list)
+                            _ = await ls_import_dataset_json(pid, ls_items)
+                            uploaded_counter["size_mb"] = float(uploaded_counter.get("size_mb", 0.0)) + added_mb
                         else:
                             max_allowed = math.ceil(total_combinations * target_val)
                             remaining = max(0, max_allowed - int(uploaded_counter.get("count", 0)))
@@ -696,7 +696,7 @@ async def _adaptive_run_phase_tasks(
                                 upload_list = jb_batch[:remaining]
                                 if upload_list:
                                     ls_items = _make_ls_formatted_items(upload_list)
-                                    _ = await asyncio.to_thread(ls_import_dataset_json, pid, ls_items)
+                                    _ = await ls_import_dataset_json(pid, ls_items)
                                     uploaded_counter["count"] = int(uploaded_counter.get("count", 0)) + len(upload_list)
         except Exception:
             pass
@@ -1027,7 +1027,7 @@ async def _run_adaptive_core(
                     ls_project_pid = None
             if not ls_project_pid:
                 title = ls_project_title or f"Auto-{timestamp_str}"
-                resp = ls_create_project(title, None, None)
+                resp = await ls_create_project(title, None, None)
                 if resp.get("status") == "200":
                     d = resp.get("data") or {}
                     ls_project_pid = d.get("id")
@@ -1227,19 +1227,19 @@ async def _run_batch_task(task_id: str, req: BatchExecRequest):
         
         for tpl_id in req.template_ids:
             template_info = resolve_template(tpl_id)
-            is_leaking = False
+            is_single_only = False
             if template_info:
                 raw_attack_type = template_info.get("attack_type")
                 if isinstance(raw_attack_type, list):
                     attack_type_list = [str(x).strip().lower() for x in raw_attack_type if x]
-                    if "prompt_leaking" in attack_type_list:
-                        is_leaking = True
+                    if ("prompt_leaking" in attack_type_list) or ("code_injection" in attack_type_list):
+                        is_single_only = True
                 else:
                     attack_type = (raw_attack_type or "").strip().lower()
-                    if attack_type == "prompt_leaking":
-                        is_leaking = True
+                    if attack_type in ["prompt_leaking", "code_injection"]:
+                        is_single_only = True
             
-            if is_leaking:
+            if is_single_only:
                 if data_ids_int:
                     did = data_ids_int[0]
                     key = (tpl_id, did)
